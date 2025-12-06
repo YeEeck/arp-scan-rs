@@ -8,7 +8,7 @@ mod ip_box;
 
 pub fn scan_by_arp(cidr: &str) -> io::Result<Vec<IpCheckResult>> {
     let avaliable_node_list: Arc<Mutex<Vec<IpCheckResult>>> = Arc::new(Mutex::new(Vec::new()));
-    let first_ip_addr_str = ip_box::first_ip(cidr).expect("No avalivable addr.");
+    let first_ip_addr_str = ip_box::first_ip(cidr).ok_or(io::Error::new(io::ErrorKind::InvalidInput, "No avaliable ip addr."))?;
     let mut ip_string = first_ip_addr_str;
     let mut handle_vec: Vec<JoinHandle<()>> = Vec::new();
     loop {

@@ -1,31 +1,54 @@
-import {GroupBox, LineEdit, Button} from "std-widgets.slint";
+import { GroupBox, LineEdit, Button, ListView } from "std-widgets.slint";
+
+export struct ResultListData {
+    data:string,
+}
 
 export component MainWindow inherits Window {
     title: "ArpScan-rs-slint";
     width: 400px;
     height: 500px;
 
-    VerticalLayout { 
-        alignment:start;
+    in property <[ResultListData]> result_list_data_model;
+    in-out property <string> cidr;
+    callback do_scan();
+
+    VerticalLayout {
+        alignment: start;
         padding-left: 25px;
         padding-right: 25px;
-
-        Text { 
+        spacing: 8px;
+        Text {
             font-size: 27px;
             font-weight: 700;
-            color: #6776FF;  
+            color: #6776FF;
         }
 
-        GroupBox{
-            title:"CIDR";
+        GroupBox {
+            title: "CIDR";
             LineEdit {
                 placeholder-text: "192.168.1.0/24";
+                text <=> cidr;
             }
         }
 
         Button {
             text: "Scan";
+            clicked => {
+                root.do_scan();
+            }
         }
 
+        ListView {
+            height: 350px;
+            for data in result_list_data_model: Rectangle {
+                height: 30px;
+                width: parent.width;
+                Text {
+                    x: 0;
+                    text: data.data;
+                }
+            }
+        }
     }
 }

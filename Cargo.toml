@@ -12,5 +12,5 @@ windows = { version = "0.52", features = ["Win32_NetworkManagement_IpHelper", "W
 [build-dependencies]
 slint-build = "1.14.1"
 
-[package.metadata.windows]
-subsystem = "windows"
+[build]
+target = "i686-pc-windows-msvc"
