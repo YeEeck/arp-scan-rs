@@ -1,14 +1,23 @@
 use std::thread::JoinHandle;
 use std::{io, thread};
+use clap::Parser;
 
 use crate::ip_box::next_ip;
 
 mod arp_core;
 mod ip_box;
 
-// 使用示例
+#[derive(Parser)]
+#[command(version, author, about, long_about = None)]
+struct Cli {
+    #[arg(long)]
+    cidr: String,
+}
+
 fn main() {
-    let cidr = "192.168.1.0/24";
+    let cli = Cli::parse();
+    let cidr = &cli.cidr;
+    println!("Use CIDR: {cidr}");
     let first_ip_addr_str = ip_box::first_ip(cidr).expect("No avalivable addr.");
     let mut ip_string = first_ip_addr_str;
     let mut handle_vec: Vec<JoinHandle<()>> = Vec::new();
