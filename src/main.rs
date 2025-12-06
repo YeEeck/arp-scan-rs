@@ -9,7 +9,9 @@ struct Cli {
     cidr: String,
 }
 
+slint::include_modules!();
 fn main() {
+    /*
     let cli = Cli::parse();
     let cidr = &cli.cidr;
     println!("Use CIDR: {cidr}");
@@ -20,4 +22,6 @@ fn main() {
             println!("{} --- {}", res_elem.ip, res_elem.mac);
         }
     }
+    */
+    MainWindow::new().unwrap().run().unwrap();
 }
