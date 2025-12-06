@@ -1,18 +1,49 @@
-use std::io;
+use std::thread::JoinHandle;
+use std::{io, thread};
+
+use crate::ip_box::next_ip;
 
 mod arp_core;
+mod ip_box;
 
 // 使用示例
 fn main() {
-    let ip_str = "192.168.1.195";
-    match check_ip_exist(ip_str) {
-        Ok(result) => {
-            if result.exist {
-                print!("{} --- {}", result.ip, result.mac);
+    let cidr = "192.168.1.0/24";
+    let first_ip_addr_str = ip_box::first_ip(cidr).expect("No avalivable addr.");
+    let mut ip_string = first_ip_addr_str;
+    let mut handle_vec: Vec<JoinHandle<()>> = Vec::new();
+    loop {
+        //println!("current_ip: {}", ip_string);
+        let ip_string_cur_temp = ip_string.clone();
+        let handle = thread::spawn(
+            move || match check_ip_exist(&(ip_string_cur_temp.clone())) {
+                Ok(result) => {
+                    if result.exist {
+                        println!("{} --- {}", result.ip, result.mac);
+                    }
+                }
+                Err(e) => {
+                    println!("Error: {e}");
+                }
+            },
+        );
+        handle_vec.push(handle);
+
+        match next_ip(cidr, &ip_string) {
+            Some(ip) => {
+                ip_string = ip;
+            }
+            None => {
+                break;
             }
         }
-        Err(e) => {
-            print!("Error: {e}");
+    }
+    for handle in handle_vec {
+        match handle.join() {
+            Ok(res) => {}
+            Err(e) =>{
+                println!("Thread handle error: {:?}", e);
+            }
         }
     }
 }
