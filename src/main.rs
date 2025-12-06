@@ -39,11 +39,8 @@ fn main() {
         }
     }
     for handle in handle_vec {
-        match handle.join() {
-            Ok(res) => {}
-            Err(e) =>{
-                println!("Thread handle error: {:?}", e);
-            }
+        if let Err(e) = handle.join() {
+            println!("Thread handle error: {:?}", e);
         }
     }
 }
