@@ -150,6 +150,7 @@ export component MainWindow inherits Window {
 
                     for row in root.result_list_data_model: Rectangle {
                         min-height: root.result-row-height;
+                        horizontal-stretch: 1;
                         clip: true;
 
                         HorizontalLayout {
