@@ -2,12 +2,12 @@ use std::io;
 use std::net::Ipv4Addr;
 use std::str::FromStr;
 
-/// 将 IP 字符串转换为 u32（网络字节序）
+/// 将 IP 字符串转换为 Windows IPAddr 表示
 pub fn parse_ip(ip_str: &str) -> io::Result<u32> {
     let addr = Ipv4Addr::from_str(ip_str)
         .map_err(|e| io::Error::new(io::ErrorKind::InvalidInput, e))?;
 
-    Ok(u32::from(addr))
+    Ok(u32::from_ne_bytes(addr.octets()))
 }
 
 /// 获取指定 IP 的 MAC 地址
