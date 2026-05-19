@@ -1,5 +1,7 @@
 use std::net::Ipv4Addr;
 
+const MAX_MATERIALIZED_HOSTS: usize = 4_096;
+
 fn parse_cidr(cidr: &str) -> Option<(u32, u8)> {
     let (net_str, prefix_len_str) = cidr.split_once('/')?;
     let net_ip: Ipv4Addr = net_str.parse().ok()?;
@@ -38,20 +40,57 @@ fn usable_range(cidr: &str) -> Option<(u32, u32)> {
     }
 }
 
-pub fn host_count(cidr: &str) -> Option<u64> {
+#[derive(Clone, Debug)]
+pub struct HostIter {
+    next: u32,
+    end: u32,
+    done: bool,
+}
+
+impl Iterator for HostIter {
+    type Item = String;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        if self.done {
+            return None;
+        }
+
+        let current = self.next;
+        if current > self.end {
+            self.done = true;
+            return None;
+        }
+
+        self.next = current.checked_add(1)?;
+        if current == self.end {
+            self.done = true;
+        }
+
+        Some(Ipv4Addr::from(current).to_string())
+    }
+}
+
+pub fn host_count(cidr: &str) -> Option<usize> {
     let (first_usable, last_usable) = usable_range(cidr)?;
-    Some(u64::from(last_usable - first_usable + 1))
+    Some((last_usable - first_usable + 1) as usize)
 }
 
 pub fn hosts(cidr: &str) -> Option<Vec<String>> {
-    let (first_usable, last_usable) = usable_range(cidr)?;
-    let mut result = Vec::new();
-
-    for ip_u32 in first_usable..=last_usable {
-        result.push(Ipv4Addr::from(ip_u32).to_string());
+    let total_hosts = host_count(cidr)?;
+    if total_hosts > MAX_MATERIALIZED_HOSTS {
+        return None;
     }
 
-    Some(result)
+    Some(host_iter(cidr)?.collect())
+}
+
+pub fn host_iter(cidr: &str) -> Option<HostIter> {
+    let (first_usable, last_usable) = usable_range(cidr)?;
+    Some(HostIter {
+        next: first_usable,
+        end: last_usable,
+        done: false,
+    })
 }
 
 pub fn first_ip(cidr: &str) -> Option<String> {

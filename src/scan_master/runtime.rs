@@ -3,6 +3,7 @@ use std::sync::mpsc::Receiver;
 use std::sync::Arc;
 use std::thread::JoinHandle;
 
+#[derive(Debug)]
 pub struct ScanTask {
     pub task_id: u64,
     pub events: Receiver<ScanEvent>,
@@ -10,6 +11,7 @@ pub struct ScanTask {
     pub join_handle: JoinHandle<()>,
 }
 
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub enum ScanEvent {
     Started {
         task_id: u64,
