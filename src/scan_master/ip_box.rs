@@ -61,9 +61,10 @@ impl Iterator for HostIter {
             return None;
         }
 
-        self.next = current.checked_add(1)?;
         if current == self.end {
             self.done = true;
+        } else {
+            self.next = current.checked_add(1)?;
         }
 
         Some(Ipv4Addr::from(current).to_string())
@@ -201,8 +202,23 @@ mod tests {
     }
 
     #[test]
+    fn test_host_iter_31_upper_edge() {
+        let mut iter = host_iter("255.255.255.254/31").unwrap();
+        assert_eq!(iter.next(), Some("255.255.255.254".to_string()));
+        assert_eq!(iter.next(), Some("255.255.255.255".to_string()));
+        assert_eq!(iter.next(), None);
+    }
+
+    #[test]
     fn test_next_ip_32() {
         assert_eq!(next_ip("192.168.1.5/32", "192.168.1.5"), None);
+    }
+
+    #[test]
+    fn test_host_iter_32_upper_edge() {
+        let mut iter = host_iter("255.255.255.255/32").unwrap();
+        assert_eq!(iter.next(), Some("255.255.255.255".to_string()));
+        assert_eq!(iter.next(), None);
     }
 
     #[test]
@@ -240,5 +256,10 @@ mod tests {
 
         let third = next_ip(cidr, &second).unwrap();
         assert_eq!(third, "192.168.1.3");
+    }
+
+    #[test]
+    fn test_hosts_refuses_large_materialization() {
+        assert!(hosts("10.0.0.0/8").is_none());
     }
 }
