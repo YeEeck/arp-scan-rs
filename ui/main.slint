@@ -19,14 +19,7 @@ export component MainWindow inherits Window {
     private property <length> control-row-spacing: 10px;
     private property <length> control-min-height: 42px;
     private property <length> status-font-size: 15px;
-    private property <length> header-font-size: 15px;
     private property <length> row-font-size: 15px;
-    private property <length> result-header-height: 34px;
-    private property <length> result-row-height: 34px;
-    private property <length> result-panel-padding: 10px;
-    private property <length> result-column-spacing: 14px;
-    private property <length> ip-column-width: 190px;
-    private property <length> mac-column-min-width: 240px;
 
     in property <[ResultListData]> result_list_data_model;
     in-out property <string> cidr;
@@ -88,52 +81,45 @@ export component MainWindow inherits Window {
         }
 
         Rectangle {
-            height: root.result_header_height + root.result_row_height * 10 + root.result_panel_padding * 2;
+            height: 380px;
             horizontal-stretch: 1;
             border-width: 1px;
             border-color: #d0d7de;
 
             VerticalLayout {
-                padding: root.result_panel_padding;
-                spacing: root.result_column_spacing;
+                padding: 8px;
+                spacing: 6px;
 
                 Rectangle {
-                    height: root.result_header_height;
+                    height: 26px;
                     horizontal-stretch: 1;
                     HorizontalLayout {
-                        spacing: root.result_column_spacing;
+                        spacing: 12px;
                         Text {
                             text: "IP";
-                            font-size: root.header_font_size;
                             font-weight: 700;
-                            width: root.ip_column_width;
+                            width: 180px;
                         }
                         Text {
                             text: "MAC";
-                            font-size: root.header_font_size;
                             font-weight: 700;
-                            min-width: root.mac_column_min_width;
                         }
                     }
                 }
 
                 ListView {
-                    horizontal-stretch: 1;
                     for row in root.result_list_data_model: Rectangle {
-                        height: root.result_row_height;
+                        height: 28px;
                         horizontal-stretch: 1;
 
                         HorizontalLayout {
-                            spacing: root.result_column_spacing;
+                            spacing: 12px;
                             Text {
                                 text: row.ip;
-                                font-size: root.row_font_size;
-                                width: root.ip_column_width;
+                                width: 180px;
                             }
                             Text {
                                 text: row.mac;
-                                font-size: root.row_font_size;
-                                min-width: root.mac_column_min_width;
                             }
                         }
                     }
