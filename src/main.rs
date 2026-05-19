@@ -91,13 +91,20 @@ fn spawn_event_forwarder(
 ) {
     let ScanTask {
         task_id,
+        cancel_flag,
         events,
         join_handle,
         ..
     } = task;
 
     thread::spawn(move || {
+        let mut ui_dispatch_available = true;
+
         for event in events {
+            if !ui_dispatch_available {
+                continue;
+            }
+
             let is_terminal = matches!(
                 &event,
                 ScanEvent::Finished { .. } | ScanEvent::Cancelled { .. } | ScanEvent::Failed { .. }
@@ -133,11 +140,14 @@ fn spawn_event_forwarder(
             });
 
             if dispatch_result.is_err() {
-                break;
+                cancel_flag.store(true, Ordering::Relaxed);
+                ui_dispatch_available = false;
             }
         }
 
-        let _ = join_handle.join();
+        if ui_dispatch_available {
+            let _ = join_handle.join();
+        }
     });
 }
 

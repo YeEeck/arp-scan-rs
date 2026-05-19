@@ -1,27 +1,23 @@
 use std::io;
 
-#[cfg(target_os = "windows")]
-use std::sync::{Arc, Mutex};
-#[cfg(target_os = "windows")]
-use std::thread;
-#[cfg(target_os = "windows")]
-use std::thread::JoinHandle;
-
 mod arp_core;
 mod ip_box;
-pub mod runtime;
 pub mod probe;
+pub mod runtime;
 
 pub use ip_box::{
     first_ip, host_count, host_iter, hosts, next_ip, HostIter, HostMaterializationError,
     HostMaterializeError,
 };
-pub use runtime::{next_task_id, start_scan, start_scan_with_probe, ScanEvent, ScanTask};
 pub use probe::{ArpProbe, SystemArpProbe};
+pub use runtime::{next_task_id, start_scan, start_scan_with_probe, ScanEvent, ScanTask};
+
+#[cfg(target_os = "windows")]
+const DEFAULT_MAX_IN_FLIGHT: usize = 256;
 
 #[cfg(target_os = "windows")]
 pub fn scan_by_arp(cidr: &str) -> io::Result<Vec<IpCheckResult>> {
-    scan_by_arp_threaded(cidr, SystemArpProbe)
+    collect_scan_results(start_scan(cidr, DEFAULT_MAX_IN_FLIGHT)?)
 }
 
 #[cfg(not(target_os = "windows"))]
@@ -56,54 +52,6 @@ where
     Ok(avaliable_node_list)
 }
 
-#[cfg(target_os = "windows")]
-fn scan_by_arp_threaded<P>(cidr: &str, probe: P) -> io::Result<Vec<IpCheckResult>>
-where
-    P: ArpProbe + Send + Sync + 'static,
-{
-    let avaliable_node_list: Arc<Mutex<Vec<IpCheckResult>>> = Arc::new(Mutex::new(Vec::new()));
-    let first_ip_addr_str = ip_box::first_ip(cidr).ok_or(io::Error::new(io::ErrorKind::InvalidInput, "No avaliable ip addr."))?;
-    let mut ip_string = first_ip_addr_str;
-    let mut handle_vec: Vec<JoinHandle<()>> = Vec::new();
-    let probe = Arc::new(probe);
-    loop {
-        let avaliable_node_list_shared_clone = Arc::clone(&avaliable_node_list);
-        let probe_shared_clone = Arc::clone(&probe);
-        let ip_string_cur_temp = ip_string.clone();
-        let handle = thread::spawn(move || {
-            match check_ip_exist_with_probe(&(ip_string_cur_temp.clone()), probe_shared_clone.as_ref()) {
-                Ok(result) => {
-                    if result.exist {
-                        let mut avaliable_node_list_guard =
-                            avaliable_node_list_shared_clone.lock().unwrap();
-                        avaliable_node_list_guard.push(result);
-                    }
-                }
-                Err(e) => {
-                    println!("Error: {e}");
-                }
-            }
-        });
-        handle_vec.push(handle);
-
-        match ip_box::next_ip(cidr, &ip_string) {
-            Some(ip) => {
-                ip_string = ip;
-            }
-            None => {
-                break;
-            }
-        }
-    }
-    for handle in handle_vec {
-        if let Err(e) = handle.join() {
-            println!("Thread handle error: {:?}", e);
-        }
-    }
-
-    Ok(avaliable_node_list.lock().unwrap().to_vec())
-}
-
 #[derive(Clone, Debug)]
 pub struct IpCheckResult {
     pub ip: String,
@@ -126,4 +74,40 @@ fn check_ip_exist_with_probe<P: ArpProbe + ?Sized>(ip_str: &str, probe: &P) -> i
     }
 
     Ok(result)
+}
+
+#[cfg(target_os = "windows")]
+fn collect_scan_results(task: ScanTask) -> io::Result<Vec<IpCheckResult>> {
+    let ScanTask {
+        events,
+        join_handle,
+        ..
+    } = task;
+
+    let mut results = Vec::new();
+    let mut terminal_error = None;
+
+    for event in events {
+        match event {
+            ScanEvent::HostFound { ip, mac, .. } => {
+                results.push(IpCheckResult {
+                    ip,
+                    mac,
+                    exist: true,
+                });
+            }
+            ScanEvent::Failed { message, .. } => {
+                terminal_error = Some(io::Error::other(message));
+            }
+            _ => {}
+        }
+    }
+
+    let _ = join_handle.join();
+
+    if let Some(err) = terminal_error {
+        return Err(err);
+    }
+
+    Ok(results)
 }
