@@ -19,13 +19,16 @@ fn result_list_panel_smoke_test_exposes_generated_bindings() {
 
     panel.set_rows(ModelRc::from(std::rc::Rc::new(rows)));
 
-    assert_eq!(
-        panel
-            .get_rows()
-            .as_any()
-            .downcast_ref::<VecModel<ResultListData>>()
-            .unwrap()
-            .row_count(),
-        2
-    );
+    let rows_model = panel.get_rows();
+    let rows = rows_model
+        .as_any()
+        .downcast_ref::<VecModel<ResultListData>>()
+        .unwrap();
+
+    assert_eq!(rows.row_count(), 2);
+    assert_eq!(rows.row_data(0).unwrap().ip, "192.168.1.2");
+    assert_eq!(rows.row_data(0).unwrap().mac, "AA:AA:AA:AA:AA:02");
+    assert_eq!(rows.row_data(1).unwrap().ip, "192.168.1.20");
+    assert_eq!(rows.row_data(1).unwrap().mac, "AA:AA:AA:AA:AA:14");
+    assert!(rows.row_data(2).is_none());
 }

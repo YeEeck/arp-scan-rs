@@ -161,8 +161,8 @@ component MainWindow inherits Window {
     private property <length> section-spacing: 14px;
     private property <length> control-row-spacing: 10px;
     private property <length> control-min-height: 42px;
+    private property <length> control-font-size: 15px;
     private property <length> status-font-size: 15px;
-    private property <length> row-font-size: 15px;
     in property <[ResultListData]> result_list_data_model;
     in-out property <string> cidr;
     in property <string> status_text;
@@ -186,7 +186,7 @@ component MainWindow inherits Window {
                 placeholder-text: "192.168.1.0/24";
                 text <=> root.cidr;
                 enabled: root.scan_enabled;
-                font-size: root.row_font_size;
+                font-size: root.control_font_size;
             }
         }
 
@@ -235,4 +235,5 @@ component MainWindow inherits Window {
     }
 }
 
+// Slint 1.14 only keeps a non-Window export in Rust bindings when it is the last export.
 export { MainWindow, ResultListPanel }
