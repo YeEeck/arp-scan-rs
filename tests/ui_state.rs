@@ -134,3 +134,33 @@ fn begin_scan_clears_previous_results_for_a_new_task() {
     assert_eq!(snapshot.progress_text, "0 / 0");
     assert!(snapshot.rows.is_empty());
 }
+
+#[test]
+fn fail_to_start_clears_previous_results_and_progress() {
+    let mut state = ScanUiState::default();
+
+    state.begin_scan(12);
+    state.apply_event(ScanEvent::Started {
+        task_id: 12,
+        total_hosts: 5,
+    });
+    state.apply_event(ScanEvent::HostFound {
+        task_id: 12,
+        ip: "192.168.1.4".into(),
+        mac: "AA:AA:AA:AA:AA:04".into(),
+    });
+    state.apply_event(ScanEvent::Progress {
+        task_id: 12,
+        scanned_hosts: 3,
+        total_hosts: 5,
+    });
+
+    state.fail_to_start("invalid CIDR");
+
+    let snapshot = state.snapshot();
+    assert_eq!(snapshot.status_text, "Failed: invalid CIDR");
+    assert_eq!(snapshot.progress_text, "0 / 0");
+    assert!(snapshot.rows.is_empty());
+    assert!(!snapshot.is_scanning);
+    assert!(!snapshot.can_cancel);
+}

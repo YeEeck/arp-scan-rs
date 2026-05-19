@@ -1,13 +1,12 @@
 #![cfg_attr(target_os = "windows", windows_subsystem = "windows")]
 
-use std::rc::Rc;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 use std::thread;
 
 use arp_scan_rs::scan_master::{start_scan, ScanEvent, ScanTask};
-use arp_scan_rs::ui_state::{ScanUiState, ViewSnapshot};
-use slint::{ModelRc, VecModel};
+use arp_scan_rs::ui_state::{RowMutation, ScanUiState, ViewState};
+use slint::{Model, ModelRc, VecModel};
 
 slint::include_modules!();
 
@@ -24,8 +23,8 @@ fn main() {
     let ui_state = Arc::new(Mutex::new(ScanUiState::default()));
     let active_scan = Arc::new(Mutex::new(None::<ActiveScan>));
 
-    window.set_result_list_data_model(ModelRc::from(Rc::new(VecModel::default())));
-    apply_snapshot(&window, ui_state.lock().unwrap().snapshot());
+    window.set_result_list_data_model(ModelRc::from(std::rc::Rc::new(VecModel::default())));
+    apply_view_state(&window, ui_state.lock().unwrap().view_state());
 
     let weak_window = window.as_weak();
     let ui_state_for_start = Arc::clone(&ui_state);
@@ -40,16 +39,22 @@ fn main() {
             Ok(task) => task,
             Err(err) => {
                 let mut state = ui_state_for_start.lock().unwrap();
-                state.fail_to_start(err.to_string());
-                apply_snapshot(&window, state.snapshot());
+                let row_mutation = state.fail_to_start(err.to_string());
+                let view_state = state.view_state();
+                drop(state);
+                apply_view_state(&window, view_state);
+                apply_row_mutation(&window, row_mutation);
                 return;
             }
         };
 
         {
             let mut state = ui_state_for_start.lock().unwrap();
-            state.begin_scan(task.task_id);
-            apply_snapshot(&window, state.snapshot());
+            let row_mutation = state.begin_scan(task.task_id);
+            let view_state = state.view_state();
+            drop(state);
+            apply_view_state(&window, view_state);
+            apply_row_mutation(&window, row_mutation);
         }
 
         {
@@ -108,8 +113,15 @@ fn spawn_event_forwarder(
 
                 {
                     let mut state = ui_state.lock().unwrap();
-                    state.apply_event(event);
-                    apply_snapshot(&window, state.snapshot());
+                    let outcome = state.apply_event(event);
+                    if !outcome.applied {
+                        return;
+                    }
+                    let view_state = state.view_state();
+                    let row_mutation = outcome.row_mutation;
+                    drop(state);
+                    apply_view_state(&window, view_state);
+                    apply_row_mutation(&window, row_mutation);
                 }
 
                 if is_terminal {
@@ -129,22 +141,39 @@ fn spawn_event_forwarder(
     });
 }
 
-fn apply_snapshot(
-    window: &MainWindow,
-    snapshot: ViewSnapshot,
-) {
-    window.set_status_text(snapshot.status_text.into());
-    window.set_progress_text(snapshot.progress_text.into());
-    window.set_scan_enabled(!snapshot.is_scanning);
-    window.set_cancel_enabled(snapshot.can_cancel);
+fn apply_view_state(window: &MainWindow, view_state: ViewState) {
+    window.set_status_text(view_state.status_text.into());
+    window.set_progress_text(view_state.progress_text.into());
+    window.set_scan_enabled(!view_state.is_scanning);
+    window.set_cancel_enabled(view_state.can_cancel);
+}
 
-    let rows = snapshot
-        .rows
-        .into_iter()
-        .map(|row| ResultListData {
-            ip: row.ip.into(),
-            mac: row.mac.into(),
-        })
-        .collect::<Vec<_>>();
-    window.set_result_list_data_model(ModelRc::from(Rc::new(VecModel::from(rows))));
+fn apply_row_mutation(window: &MainWindow, row_mutation: RowMutation) {
+    if matches!(row_mutation, RowMutation::None) {
+        return;
+    }
+
+    let model_rc = window.get_result_list_data_model();
+    let model = model_rc
+        .as_any()
+        .downcast_ref::<VecModel<ResultListData>>()
+        .expect("result model should always be a VecModel<ResultListData>");
+
+    match row_mutation {
+        RowMutation::None => {}
+        RowMutation::Clear => model.clear(),
+        RowMutation::Insert { index, row } => model.insert(index, map_row(row)),
+        RowMutation::Update { index, row } => {
+            if index < model.row_count() {
+                model.set_row_data(index, map_row(row));
+            }
+        }
+    }
+}
+
+fn map_row(row: arp_scan_rs::ui_state::ResultRow) -> ResultListData {
+    ResultListData {
+        ip: row.ip.into(),
+        mac: row.mac.into(),
+    }
 }
