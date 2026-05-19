@@ -1,52 +1,108 @@
-import { GroupBox, LineEdit, Button, ListView } from "std-widgets.slint";
+import { Button, GroupBox, LineEdit, ListView } from "std-widgets.slint";
 
 export struct ResultListData {
-    data:string,
+    ip: string,
+    mac: string,
 }
 
 export component MainWindow inherits Window {
-    title: "ArpScan-rs-slint";
-    width: 400px;
-    height: 500px;
+    title: "ArpScan-rs";
+    width: 520px;
+    height: 560px;
 
     in property <[ResultListData]> result_list_data_model;
     in-out property <string> cidr;
+    in property <string> status_text;
+    in property <string> progress_text;
+    in property <bool> scan_enabled;
+    in property <bool> cancel_enabled;
+
     callback do_scan();
+    callback do_cancel();
 
     VerticalLayout {
-        alignment: start;
-        padding-left: 25px;
-        padding-right: 25px;
-        spacing: 8px;
-        Text {
-            font-size: 27px;
-            font-weight: 700;
-            color: #6776FF;
-        }
+        padding: 20px;
+        spacing: 10px;
 
         GroupBox {
             title: "CIDR";
             LineEdit {
                 placeholder-text: "192.168.1.0/24";
-                text <=> cidr;
+                text <=> root.cidr;
+                enabled: root.scan_enabled;
             }
         }
 
-        Button {
-            text: "Scan";
-            clicked => {
-                root.do_scan();
+        HorizontalLayout {
+            spacing: 8px;
+
+            Button {
+                text: "Scan";
+                enabled: root.scan_enabled;
+                clicked => {
+                    root.do_scan();
+                }
+            }
+
+            Button {
+                text: "Cancel";
+                enabled: root.cancel_enabled;
+                clicked => {
+                    root.do_cancel();
+                }
             }
         }
 
-        ListView {
-            height: 350px;
-            for data in result_list_data_model: Rectangle {
-                height: 30px;
-                width: parent.width;
-                Text {
-                    x: 0;
-                    text: data.data;
+        Text {
+            text: root.status_text;
+        }
+
+        Text {
+            text: root.progress_text;
+        }
+
+        Rectangle {
+            height: 380px;
+            border-width: 1px;
+            border-color: #d0d7de;
+
+            VerticalLayout {
+                padding: 8px;
+                spacing: 6px;
+
+                Rectangle {
+                    height: 26px;
+                    width: parent.width;
+                    HorizontalLayout {
+                        spacing: 12px;
+                        Text {
+                            text: "IP";
+                            font-weight: 700;
+                            width: 180px;
+                        }
+                        Text {
+                            text: "MAC";
+                            font-weight: 700;
+                        }
+                    }
+                }
+
+                ListView {
+                    for row in root.result_list_data_model: Rectangle {
+                        height: 28px;
+                        width: parent.width;
+
+                        HorizontalLayout {
+                            spacing: 12px;
+                            Text {
+                                text: row.ip;
+                                width: 180px;
+                            }
+                            Text {
+                                text: row.mac;
+                            }
+                        }
+                    }
                 }
             }
         }

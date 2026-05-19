@@ -1,66 +1,150 @@
-#![windows_subsystem = "windows"]
+#![cfg_attr(target_os = "windows", windows_subsystem = "windows")]
 
-use clap::Parser;
-use slint::{Model, ModelRc, VecModel};
 use std::rc::Rc;
-use arp_scan_rs::scan_master;
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::{Arc, Mutex};
+use std::thread;
 
-#[derive(Parser)]
-#[command(version, author, about, long_about = None)]
-struct Cli {
-    #[arg(long)]
-    cidr: String,
-}
+use arp_scan_rs::scan_master::{start_scan, ScanEvent, ScanTask};
+use arp_scan_rs::ui_state::{ScanUiState, ViewSnapshot};
+use slint::{ModelRc, VecModel};
 
 slint::include_modules!();
+
+const MAX_IN_FLIGHT: usize = 256;
+
+#[derive(Clone)]
+struct ActiveScan {
+    task_id: u64,
+    cancel_flag: Arc<AtomicBool>,
+}
+
 fn main() {
-    /*
-    let cli = Cli::parse();
-    let cidr = &cli.cidr;
-    println!("Use CIDR: {cidr}");
+    let window = MainWindow::new().unwrap();
+    let ui_state = Arc::new(Mutex::new(ScanUiState::default()));
+    let active_scan = Arc::new(Mutex::new(None::<ActiveScan>));
 
-    let res_vec = scan_master::scan_by_arp(cidr).unwrap();
-    for res_elem in res_vec {
-        if res_elem.exist {
-            println!("{} --- {}", res_elem.ip, res_elem.mac);
+    window.set_result_list_data_model(ModelRc::from(Rc::new(VecModel::default())));
+    apply_snapshot(&window, ui_state.lock().unwrap().snapshot());
+
+    let weak_window = window.as_weak();
+    let ui_state_for_start = Arc::clone(&ui_state);
+    let active_scan_for_start = Arc::clone(&active_scan);
+    window.on_do_scan(move || {
+        let Some(window) = weak_window.upgrade() else {
+            return;
+        };
+
+        let cidr = window.get_cidr().to_string();
+        let task = match start_scan(&cidr, MAX_IN_FLIGHT) {
+            Ok(task) => task,
+            Err(err) => {
+                let mut state = ui_state_for_start.lock().unwrap();
+                state.fail_to_start(err.to_string());
+                apply_snapshot(&window, state.snapshot());
+                return;
+            }
+        };
+
+        {
+            let mut state = ui_state_for_start.lock().unwrap();
+            state.begin_scan(task.task_id);
+            apply_snapshot(&window, state.snapshot());
         }
-    }
-    */
-    //MainWindow::new().unwrap().run().unwrap();
-    let main_window = MainWindow::new().unwrap();
 
-    let init_result_data: Vec<ResultListData> = vec![
-        ResultListData { data: "Waiting for scan.".into() },
-        ResultListData { data: "...".into() },
-    ];
+        {
+            let mut active = active_scan_for_start.lock().unwrap();
+            *active = Some(ActiveScan {
+                task_id: task.task_id,
+                cancel_flag: Arc::clone(&task.cancel_flag),
+            });
+        }
 
-    let result_list_data_model = Rc::new(VecModel::from(init_result_data));
-    main_window.set_result_list_data_model(ModelRc::from(result_list_data_model.clone()));
+        spawn_event_forwarder(
+            task,
+            window.as_weak(),
+            Arc::clone(&ui_state_for_start),
+            Arc::clone(&active_scan_for_start),
+        );
+    });
 
-    let weak_window = main_window.as_weak();
-    main_window.on_do_scan(move || {
-        let window = weak_window.upgrade().unwrap();
-        let current_cidr = window.get_cidr();
-        let result_model_rc = window.get_result_list_data_model();
-        let model = result_model_rc
-            .as_any()
-            .downcast_ref::<VecModel<ResultListData>>()
-            .unwrap();
-        match scan_master::scan_by_arp(&current_cidr) {
-            Ok(scan_res) => {
-                model.clear();
-                for scan_res_elem in scan_res {
-                    let new_data = ResultListData {
-                        data: format!("{} -- {}", scan_res_elem.ip, scan_res_elem.mac).into(),
-                    };
-                    model.push(new_data);
-                }
-            }
-            Err(e) => {
-                println!("{:?}", e);
-            }
+    let active_scan_for_cancel = Arc::clone(&active_scan);
+    window.on_do_cancel(move || {
+        if let Some(active) = active_scan_for_cancel.lock().unwrap().as_ref() {
+            active.cancel_flag.store(true, Ordering::Relaxed);
         }
     });
 
-    main_window.run().unwrap();
+    window.run().unwrap();
+}
+
+fn spawn_event_forwarder(
+    task: ScanTask,
+    weak_window: slint::Weak<MainWindow>,
+    ui_state: Arc<Mutex<ScanUiState>>,
+    active_scan: Arc<Mutex<Option<ActiveScan>>>,
+) {
+    let ScanTask {
+        task_id,
+        events,
+        join_handle,
+        ..
+    } = task;
+
+    thread::spawn(move || {
+        for event in events {
+            let is_terminal = matches!(
+                &event,
+                ScanEvent::Finished { .. } | ScanEvent::Cancelled { .. } | ScanEvent::Failed { .. }
+            );
+            let weak_window = weak_window.clone();
+            let ui_state = Arc::clone(&ui_state);
+            let active_scan = Arc::clone(&active_scan);
+
+            let dispatch_result = slint::invoke_from_event_loop(move || {
+                let Some(window) = weak_window.upgrade() else {
+                    return;
+                };
+
+                {
+                    let mut state = ui_state.lock().unwrap();
+                    state.apply_event(event);
+                    apply_snapshot(&window, state.snapshot());
+                }
+
+                if is_terminal {
+                    let mut active = active_scan.lock().unwrap();
+                    if active.as_ref().is_some_and(|scan| scan.task_id == task_id) {
+                        *active = None;
+                    }
+                }
+            });
+
+            if dispatch_result.is_err() {
+                break;
+            }
+        }
+
+        let _ = join_handle.join();
+    });
+}
+
+fn apply_snapshot(
+    window: &MainWindow,
+    snapshot: ViewSnapshot,
+) {
+    window.set_status_text(snapshot.status_text.into());
+    window.set_progress_text(snapshot.progress_text.into());
+    window.set_scan_enabled(!snapshot.is_scanning);
+    window.set_cancel_enabled(snapshot.can_cancel);
+
+    let rows = snapshot
+        .rows
+        .into_iter()
+        .map(|row| ResultListData {
+            ip: row.ip.into(),
+            mac: row.mac.into(),
+        })
+        .collect::<Vec<_>>();
+    window.set_result_list_data_model(ModelRc::from(Rc::new(VecModel::from(rows))));
 }
