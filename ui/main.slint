@@ -20,6 +20,13 @@ export component MainWindow inherits Window {
     private property <length> control-min-height: 42px;
     private property <length> status-font-size: 15px;
     private property <length> row-font-size: 15px;
+    private property <length> result-panel-padding: 8px;
+    private property <length> result-header-height: 28px;
+    private property <length> result-row-height: 30px;
+    private property <length> result-column-spacing: 12px;
+    private property <length> ip-column-width: 180px;
+    private property <length> mac-column-min-width: 0px;
+    private property <length> header-font-size: 15px;
 
     in property <[ResultListData]> result_list_data_model;
     in-out property <string> cidr;
@@ -81,45 +88,102 @@ export component MainWindow inherits Window {
         }
 
         Rectangle {
-            height: 380px;
+            min-height: 0px;
             horizontal-stretch: 1;
+            vertical-stretch: 1;
+            clip: true;
             border-width: 1px;
             border-color: #d0d7de;
+            background: #ffffff;
 
             VerticalLayout {
-                padding: 8px;
-                spacing: 6px;
+                padding: root.result-panel-padding;
+                spacing: 8px;
 
                 Rectangle {
-                    height: 26px;
-                    horizontal-stretch: 1;
-                    HorizontalLayout {
-                        spacing: 12px;
-                        Text {
-                            text: "IP";
-                            font-weight: 700;
-                            width: 180px;
+                    clip: true;
+                    vertical-stretch: 0;
+                    min-height: root.result-header-height;
+                    background: #f6f8fa;
+
+                    header-layout := HorizontalLayout {
+                        spacing: root.result-column-spacing;
+                        min-height: root.result-header-height;
+
+                        Rectangle {
+                            min-width: root.ip-column-width;
+                            preferred-width: root.ip-column-width;
+                            max-width: root.ip-column-width;
+
+                            Text {
+                                width: 100%;
+                                height: 100%;
+                                text: "IP";
+                                font-size: root.header-font-size;
+                                font-weight: 700;
+                                vertical-alignment: center;
+                                overflow: elide;
+                            }
                         }
-                        Text {
-                            text: "MAC";
-                            font-weight: 700;
+
+                        Rectangle {
+                            min-width: root.mac-column-min-width;
+                            horizontal-stretch: 1;
+
+                            Text {
+                                width: 100%;
+                                height: 100%;
+                                text: "MAC";
+                                font-size: root.header-font-size;
+                                font-weight: 700;
+                                vertical-alignment: center;
+                                overflow: elide;
+                            }
                         }
                     }
                 }
 
                 ListView {
+                    min-height: 0px;
+                    horizontal-stretch: 1;
+                    vertical-stretch: 1;
+
                     for row in root.result_list_data_model: Rectangle {
-                        height: 28px;
-                        horizontal-stretch: 1;
+                        min-height: root.result-row-height;
+                        clip: true;
 
                         HorizontalLayout {
-                            spacing: 12px;
-                            Text {
-                                text: row.ip;
-                                width: 180px;
+                            spacing: root.result-column-spacing;
+
+                            Rectangle {
+                                min-width: root.ip-column-width;
+                                preferred-width: root.ip-column-width;
+                                max-width: root.ip-column-width;
+                                clip: true;
+
+                                Text {
+                                    width: 100%;
+                                    height: 100%;
+                                    text: row.ip;
+                                    font-size: root.row-font-size;
+                                    vertical-alignment: center;
+                                    overflow: elide;
+                                }
                             }
-                            Text {
-                                text: row.mac;
+
+                            Rectangle {
+                                min-width: root.mac-column-min-width;
+                                horizontal-stretch: 1;
+                                clip: true;
+
+                                Text {
+                                    width: 100%;
+                                    height: 100%;
+                                    text: row.mac;
+                                    font-size: root.row-font-size;
+                                    vertical-alignment: center;
+                                    overflow: elide;
+                                }
                             }
                         }
                     }
