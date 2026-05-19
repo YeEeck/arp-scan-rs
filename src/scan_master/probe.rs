@@ -6,6 +6,12 @@ pub trait ArpProbe {
     fn probe(&self, ip: &str) -> io::Result<Option<[u8; 6]>>;
 }
 
+impl<T: ArpProbe + ?Sized> ArpProbe for &T {
+    fn probe(&self, ip: &str) -> io::Result<Option<[u8; 6]>> {
+        (*self).probe(ip)
+    }
+}
+
 #[derive(Default, Clone, Copy)]
 pub struct SystemArpProbe;
 

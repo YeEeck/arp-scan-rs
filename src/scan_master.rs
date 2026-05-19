@@ -1,6 +1,10 @@
 use std::io;
+
+#[cfg(target_os = "windows")]
 use std::sync::{Arc, Mutex};
+#[cfg(target_os = "windows")]
 use std::thread;
+#[cfg(target_os = "windows")]
 use std::thread::JoinHandle;
 
 mod arp_core;
@@ -10,11 +14,45 @@ pub mod probe;
 pub use ip_box::{first_ip, next_ip};
 pub use probe::{ArpProbe, SystemArpProbe};
 
+#[cfg(target_os = "windows")]
 pub fn scan_by_arp(cidr: &str) -> io::Result<Vec<IpCheckResult>> {
-    scan_by_arp_with_probe(cidr, SystemArpProbe)
+    scan_by_arp_threaded(cidr, SystemArpProbe)
+}
+
+#[cfg(not(target_os = "windows"))]
+pub fn scan_by_arp(_cidr: &str) -> io::Result<Vec<IpCheckResult>> {
+    Err(io::Error::new(
+        io::ErrorKind::Unsupported,
+        "ARP scanning is only supported on Windows",
+    ))
 }
 
 pub fn scan_by_arp_with_probe<P>(cidr: &str, probe: P) -> io::Result<Vec<IpCheckResult>>
+where
+    P: ArpProbe,
+{
+    let mut avaliable_node_list: Vec<IpCheckResult> = Vec::new();
+    let first_ip_addr_str = ip_box::first_ip(cidr).ok_or(io::Error::new(io::ErrorKind::InvalidInput, "No avaliable ip addr."))?;
+    let mut ip_string = first_ip_addr_str;
+    loop {
+        let result = check_ip_exist_with_probe(&ip_string, &probe)?;
+        if result.exist {
+            avaliable_node_list.push(result);
+        }
+
+        match ip_box::next_ip(cidr, &ip_string) {
+            Some(ip) => {
+                ip_string = ip;
+            }
+            None => break,
+        }
+    }
+
+    Ok(avaliable_node_list)
+}
+
+#[cfg(target_os = "windows")]
+fn scan_by_arp_threaded<P>(cidr: &str, probe: P) -> io::Result<Vec<IpCheckResult>>
 where
     P: ArpProbe + Send + Sync + 'static,
 {
@@ -23,31 +61,24 @@ where
     let mut ip_string = first_ip_addr_str;
     let mut handle_vec: Vec<JoinHandle<()>> = Vec::new();
     let probe = Arc::new(probe);
-    let first_error: Arc<Mutex<Option<(io::ErrorKind, String)>>> = Arc::new(Mutex::new(None));
     loop {
-        //println!("current_ip: {}", ip_string);
         let avaliable_node_list_shared_clone = Arc::clone(&avaliable_node_list);
-        let first_error_shared_clone = Arc::clone(&first_error);
         let probe_shared_clone = Arc::clone(&probe);
         let ip_string_cur_temp = ip_string.clone();
-        let handle = thread::spawn(
-            move || match check_ip_exist_with_probe(&(ip_string_cur_temp.clone()), probe_shared_clone.as_ref()) {
+        let handle = thread::spawn(move || {
+            match check_ip_exist_with_probe(&(ip_string_cur_temp.clone()), probe_shared_clone.as_ref()) {
                 Ok(result) => {
                     if result.exist {
                         let mut avaliable_node_list_guard =
                             avaliable_node_list_shared_clone.lock().unwrap();
                         avaliable_node_list_guard.push(result);
-                        //println!("{} --- {}", result.ip, result.mac);
                     }
                 }
                 Err(e) => {
-                    let mut first_error_guard = first_error_shared_clone.lock().unwrap();
-                    if first_error_guard.is_none() {
-                        *first_error_guard = Some((e.kind(), e.to_string()));
-                    }
+                    println!("Error: {e}");
                 }
-            },
-        );
+            }
+        });
         handle_vec.push(handle);
 
         match ip_box::next_ip(cidr, &ip_string) {
@@ -65,15 +96,10 @@ where
         }
     }
 
-    let mut first_error_guard = first_error.lock().unwrap();
-    if let Some((kind, message)) = first_error_guard.take() {
-        return Err(io::Error::new(kind, message));
-    }
-
     Ok(avaliable_node_list.lock().unwrap().to_vec())
 }
 
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 pub struct IpCheckResult {
     pub ip: String,
     pub mac: String,
