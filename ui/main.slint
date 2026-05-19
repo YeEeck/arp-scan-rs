@@ -5,7 +5,150 @@ export struct ResultListData {
     mac: string,
 }
 
-export component MainWindow inherits Window {
+component ResultListPanel inherits Rectangle {
+    in property <[ResultListData]> rows;
+
+    private property <length> panel-padding: 10px;
+    private property <length> header-height: 34px;
+    private property <length> row-height: 34px;
+    private property <length> column-spacing: 12px;
+    private property <length> ip-column-width: 180px;
+    private property <length> mac-column-min-width: 0px;
+    private property <length> row-font-size: 15px;
+    private property <length> header-font-size: 15px;
+
+    clip: true;
+    border-width: 1px;
+    border-color: #c8d1dc;
+    border-radius: 10px;
+    background: #fdfdfe;
+
+    VerticalLayout {
+        padding: root.panel-padding;
+        spacing: 8px;
+
+        Rectangle {
+            clip: true;
+            vertical-stretch: 0;
+            height: root.header-height;
+            border-radius: 7px;
+            background: #e8edf4;
+
+            header-layout := HorizontalLayout {
+                height: root.header-height;
+                width: max(self.preferred-width, result-list.visible-width);
+                x: result-list.viewport-x;
+                spacing: root.column-spacing;
+
+                Rectangle {
+                    min-width: root.ip-column-width;
+                    preferred-width: root.ip-column-width;
+                    max-width: root.ip-column-width;
+
+                    Text {
+                        x: 10px;
+                        width: parent.width - self.x;
+                        height: 100%;
+                        text: "IP";
+                        color: #2f3946;
+                        font-size: root.header-font-size;
+                        font-weight: 700;
+                        vertical-alignment: center;
+                        overflow: elide;
+                    }
+                }
+
+                Rectangle {
+                    min-width: root.mac-column-min-width;
+                    horizontal-stretch: 1;
+
+                    Text {
+                        x: 6px;
+                        width: parent.width - self.x;
+                        height: 100%;
+                        text: "MAC";
+                        color: #2f3946;
+                        font-size: root.header-font-size;
+                        font-weight: 700;
+                        vertical-alignment: center;
+                        overflow: elide;
+                    }
+                }
+            }
+        }
+
+        result-list := ListView {
+            min-height: 0px;
+            horizontal-stretch: 1;
+            vertical-stretch: 1;
+
+            for row in root.rows: Rectangle {
+                min-height: root.row-height;
+                horizontal-stretch: 1;
+                clip: true;
+                background: #fbfcfe;
+
+                VerticalLayout {
+                    spacing: 0px;
+
+                    Rectangle {
+                        min-height: root.row-height - 1px;
+                        horizontal-stretch: 1;
+                        background: #fbfcfe;
+
+                        HorizontalLayout {
+                            spacing: root.column-spacing;
+
+                            Rectangle {
+                                min-width: root.ip-column-width;
+                                preferred-width: root.ip-column-width;
+                                max-width: root.ip-column-width;
+                                clip: true;
+
+                                Text {
+                                    x: 10px;
+                                    width: parent.width - self.x;
+                                    height: 100%;
+                                    text: row.ip;
+                                    color: #1f2933;
+                                    font-size: root.row-font-size;
+                                    vertical-alignment: center;
+                                    overflow: elide;
+                                }
+                            }
+
+                            Rectangle {
+                                min-width: root.mac-column-min-width;
+                                horizontal-stretch: 1;
+                                clip: true;
+
+                                Text {
+                                    x: 6px;
+                                    width: parent.width - self.x;
+                                    height: 100%;
+                                    text: row.mac;
+                                    color: #1f2933;
+                                    font-size: root.row-font-size;
+                                    vertical-alignment: center;
+                                    overflow: elide;
+                                }
+                            }
+                        }
+                    }
+
+                    Rectangle {
+                        height: 1px;
+                        horizontal-stretch: 1;
+                        vertical-stretch: 0;
+                        background: #e1e6ed;
+                    }
+                }
+            }
+        }
+    }
+}
+
+component MainWindow inherits Window {
     title: "ArpScan-rs";
     preferred-width: 720px;
     preferred-height: 640px;
@@ -20,14 +163,6 @@ export component MainWindow inherits Window {
     private property <length> control-min-height: 42px;
     private property <length> status-font-size: 15px;
     private property <length> row-font-size: 15px;
-    private property <length> result-panel-padding: 8px;
-    private property <length> result-header-height: 28px;
-    private property <length> result-row-height: 30px;
-    private property <length> result-column-spacing: 12px;
-    private property <length> ip-column-width: 180px;
-    private property <length> mac-column-min-width: 0px;
-    private property <length> header-font-size: 15px;
-
     in property <[ResultListData]> result_list_data_model;
     in-out property <string> cidr;
     in property <string> status_text;
@@ -91,111 +226,13 @@ export component MainWindow inherits Window {
             vertical-stretch: 0;
         }
 
-        Rectangle {
+        ResultListPanel {
             min-height: 0px;
             horizontal-stretch: 1;
             vertical-stretch: 1;
-            clip: true;
-            border-width: 1px;
-            border-color: #d0d7de;
-            background: #ffffff;
-
-            VerticalLayout {
-                padding: root.result-panel-padding;
-                spacing: 8px;
-
-                Rectangle {
-                    clip: true;
-                    vertical-stretch: 0;
-                    height: root.result-header-height;
-                    background: #f6f8fa;
-
-                    header-layout := HorizontalLayout {
-                        height: root.result-header-height;
-                        width: max(self.preferred-width, result-list.visible-width);
-                        x: result-list.viewport-x;
-                        spacing: root.result-column-spacing;
-
-                        Rectangle {
-                            min-width: root.ip-column-width;
-                            preferred-width: root.ip-column-width;
-                            max-width: root.ip-column-width;
-
-                            Text {
-                                width: 100%;
-                                height: 100%;
-                                text: "IP";
-                                font-size: root.header-font-size;
-                                font-weight: 700;
-                                vertical-alignment: center;
-                                overflow: elide;
-                            }
-                        }
-
-                        Rectangle {
-                            min-width: root.mac-column-min-width;
-                            horizontal-stretch: 1;
-
-                            Text {
-                                width: 100%;
-                                height: 100%;
-                                text: "MAC";
-                                font-size: root.header-font-size;
-                                font-weight: 700;
-                                vertical-alignment: center;
-                                overflow: elide;
-                            }
-                        }
-                    }
-                }
-
-                result-list := ListView {
-                    min-height: 0px;
-                    horizontal-stretch: 1;
-                    vertical-stretch: 1;
-
-                    for row in root.result_list_data_model: Rectangle {
-                        min-height: root.result-row-height;
-                        horizontal-stretch: 1;
-                        clip: true;
-
-                        HorizontalLayout {
-                            spacing: root.result-column-spacing;
-
-                            Rectangle {
-                                min-width: root.ip-column-width;
-                                preferred-width: root.ip-column-width;
-                                max-width: root.ip-column-width;
-                                clip: true;
-
-                                Text {
-                                    width: 100%;
-                                    height: 100%;
-                                    text: row.ip;
-                                    font-size: root.row-font-size;
-                                    vertical-alignment: center;
-                                    overflow: elide;
-                                }
-                            }
-
-                            Rectangle {
-                                min-width: root.mac-column-min-width;
-                                horizontal-stretch: 1;
-                                clip: true;
-
-                                Text {
-                                    width: 100%;
-                                    height: 100%;
-                                    text: row.mac;
-                                    font-size: root.row-font-size;
-                                    vertical-alignment: center;
-                                    overflow: elide;
-                                }
-                            }
-                        }
-                    }
-                }
-            }
+            rows: root.result_list_data_model;
         }
     }
 }
+
+export { MainWindow, ResultListPanel }
