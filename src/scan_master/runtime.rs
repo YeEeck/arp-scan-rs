@@ -139,9 +139,12 @@ fn run_scan_loop<P>(
     let mut found_hosts = 0usize;
     let mut in_flight = 0usize;
     let mut dispatch_exhausted = false;
+    let mut pending_failure: Option<String> = None;
+    let mut dispatch_tx = Some(result_tx);
 
     while !dispatch_exhausted || in_flight > 0 {
-        while !dispatch_exhausted
+        while pending_failure.is_none()
+            && !dispatch_exhausted
             && in_flight < max_in_flight
             && !cancel_flag.load(Ordering::Relaxed)
         {
@@ -151,7 +154,10 @@ fn run_scan_loop<P>(
             };
 
             let probe = Arc::clone(&probe);
-            let result_tx = result_tx.clone();
+            let result_tx = dispatch_tx
+                .as_ref()
+                .expect("dispatch sender should exist while dispatch is active")
+                .clone();
             in_flight += 1;
 
             thread::spawn(move || {
@@ -164,6 +170,10 @@ fn run_scan_loop<P>(
             });
         }
 
+        if pending_failure.is_some() || dispatch_exhausted || cancel_flag.load(Ordering::Relaxed) {
+            dispatch_tx.take();
+        }
+
         if in_flight == 0 {
             break;
         }
@@ -171,11 +181,9 @@ fn run_scan_loop<P>(
         let probe_result = match result_rx.recv() {
             Ok(probe_result) => probe_result,
             Err(_) => {
-                let _ = event_tx.send(ScanEvent::Failed {
-                    task_id,
-                    message: "scan worker channel closed unexpectedly".to_string(),
-                });
-                return;
+                pending_failure
+                    .get_or_insert_with(|| "scan worker channel closed unexpectedly".to_string());
+                break;
             }
         };
 
@@ -183,6 +191,10 @@ fn run_scan_loop<P>(
 
         match probe_result {
             ProbeResult::Completed { ip, result } => {
+                if pending_failure.is_some() {
+                    continue;
+                }
+
                 scanned_hosts += 1;
 
                 match result {
@@ -196,11 +208,8 @@ fn run_scan_loop<P>(
                     }
                     Ok(None) => {}
                     Err(err) if err.kind() == io::ErrorKind::Unsupported => {
-                        let _ = event_tx.send(ScanEvent::Failed {
-                            task_id,
-                            message: err.to_string(),
-                        });
-                        return;
+                        pending_failure = Some(err.to_string());
+                        continue;
                     }
                     Err(_) => {}
                 }
@@ -212,16 +221,15 @@ fn run_scan_loop<P>(
                 });
             }
             ProbeResult::WorkerPanicked { ip } => {
-                let _ = event_tx.send(ScanEvent::Failed {
-                    task_id,
-                    message: format!("probe worker panicked before sending a result for {ip}"),
-                });
-                return;
+                pending_failure =
+                    Some(format!("probe worker panicked before sending a result for {ip}"));
             }
         }
     }
 
-    let terminal_event = if cancel_flag.load(Ordering::Relaxed) {
+    let terminal_event = if let Some(message) = pending_failure {
+        ScanEvent::Failed { task_id, message }
+    } else if cancel_flag.load(Ordering::Relaxed) {
         ScanEvent::Cancelled {
             task_id,
             scanned_hosts,

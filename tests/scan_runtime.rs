@@ -1,6 +1,7 @@
 use std::io;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{mpsc, Arc, Mutex};
+use std::thread;
 use std::time::Duration;
 
 use arp_scan_rs::scan_master::{start_scan_with_probe, ArpProbe, ScanEvent, ScanTask};
@@ -254,4 +255,104 @@ fn runtime_emits_failed_when_probe_worker_exits_before_send() {
     task.join_handle
         .join()
         .expect("scan task should exit cleanly after reporting failure");
+}
+
+#[derive(Clone)]
+struct FatalThenBlockedProbe {
+    started_tx: mpsc::Sender<String>,
+    permits: Arc<Mutex<mpsc::Receiver<()>>>,
+}
+
+impl ArpProbe for FatalThenBlockedProbe {
+    fn probe(&self, ip: &str) -> io::Result<Option<[u8; 6]>> {
+        self.started_tx
+            .send(ip.to_string())
+            .expect("test should receive probe start notifications");
+
+        if ip.ends_with(".1") {
+            Err(io::Error::new(
+                io::ErrorKind::Unsupported,
+                "fatal unsupported probe failure",
+            ))
+        } else {
+            self.permits
+                .lock()
+                .expect("probe permits should not be poisoned")
+                .recv_timeout(Duration::from_secs(2))
+                .expect("blocked worker should be released by the test");
+            Ok(None)
+        }
+    }
+}
+
+#[test]
+fn runtime_drains_in_flight_workers_before_terminal_failed() {
+    let (started_tx, started_rx) = mpsc::channel();
+    let (permit_tx, permit_rx) = mpsc::channel();
+    let probe = FatalThenBlockedProbe {
+        started_tx,
+        permits: Arc::new(Mutex::new(permit_rx)),
+    };
+
+    let task = start_scan_with_probe("192.168.1.0/30", 2, Arc::new(probe)).unwrap();
+    let ScanTask {
+        events,
+        join_handle,
+        ..
+    } = task;
+
+    assert!(matches!(
+        events.recv_timeout(Duration::from_secs(1)),
+        Ok(ScanEvent::Started {
+            total_hosts: 2,
+            ..
+        })
+    ));
+
+    let mut started = vec![
+        started_rx
+            .recv_timeout(Duration::from_secs(1))
+            .expect("first probe should start"),
+        started_rx
+            .recv_timeout(Duration::from_secs(1))
+            .expect("second probe should start"),
+    ];
+    started.sort();
+    assert_eq!(
+        started,
+        vec!["192.168.1.1".to_string(), "192.168.1.2".to_string()]
+    );
+
+    let (join_done_tx, join_done_rx) = mpsc::channel();
+    thread::spawn(move || {
+        join_handle
+            .join()
+            .expect("scan task should join cleanly after draining workers");
+        join_done_tx
+            .send(())
+            .expect("test should observe the join completion");
+    });
+
+    assert_eq!(
+        join_done_rx.recv_timeout(Duration::from_millis(200)),
+        Err(mpsc::RecvTimeoutError::Timeout)
+    );
+    assert_eq!(
+        events.recv_timeout(Duration::from_millis(200)),
+        Err(mpsc::RecvTimeoutError::Timeout)
+    );
+
+    permit_tx.send(()).unwrap();
+
+    let failure = events
+        .recv_timeout(Duration::from_secs(1))
+        .expect("expected a terminal failure after in-flight drain");
+    assert!(matches!(
+        failure,
+        ScanEvent::Failed { ref message, .. } if message == "fatal unsupported probe failure"
+    ));
+    assert_eq!(
+        join_done_rx.recv_timeout(Duration::from_secs(1)),
+        Ok(())
+    );
 }
