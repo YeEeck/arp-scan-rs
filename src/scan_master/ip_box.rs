@@ -3,10 +3,12 @@ use std::net::Ipv4Addr;
 const MAX_MATERIALIZED_HOSTS: usize = 4_096;
 
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub enum HostMaterializeError {
+pub enum HostMaterializationError {
     InvalidCidr,
     TooLarge { total_hosts: usize, max_hosts: usize },
 }
+
+pub use self::HostMaterializationError as HostMaterializeError;
 
 fn parse_cidr(cidr: &str) -> Option<(u32, u8)> {
     let (net_str, prefix_len_str) = cidr.split_once('/')?;
@@ -88,12 +90,14 @@ pub fn host_count(cidr: &str) -> Option<usize> {
 
 /// Materializes all usable hosts for a CIDR range when the range is small enough.
 ///
-/// Large valid CIDRs are intentionally bounded; for streaming access use
-/// [`host_iter()`] instead.
-pub fn hosts(cidr: &str) -> Result<Vec<String>, HostMaterializeError> {
-    let total_hosts = host_count(cidr).ok_or(HostMaterializeError::InvalidCidr)?;
+/// Returns [`HostMaterializationError::InvalidCidr`] for invalid input and
+/// [`HostMaterializationError::TooLarge`] when the CIDR is valid but exceeds the
+/// eager materialization limit. Large valid CIDRs remain available through
+/// [`host_iter()`].
+pub fn hosts(cidr: &str) -> Result<Vec<String>, HostMaterializationError> {
+    let total_hosts = host_count(cidr).ok_or(HostMaterializationError::InvalidCidr)?;
     if total_hosts > MAX_MATERIALIZED_HOSTS {
-        return Err(HostMaterializeError::TooLarge {
+        return Err(HostMaterializationError::TooLarge {
             total_hosts,
             max_hosts: MAX_MATERIALIZED_HOSTS,
         });
@@ -101,7 +105,7 @@ pub fn hosts(cidr: &str) -> Result<Vec<String>, HostMaterializeError> {
 
     host_iter(cidr)
         .map(|iter| iter.collect())
-        .ok_or(HostMaterializeError::InvalidCidr)
+        .ok_or(HostMaterializationError::InvalidCidr)
 }
 
 /// Returns a lazy iterator over all usable hosts in a CIDR range.
@@ -282,7 +286,7 @@ mod tests {
     fn test_hosts_refuses_large_materialization() {
         assert!(matches!(
             hosts("10.0.0.0/8"),
-            Err(HostMaterializeError::TooLarge { .. })
+            Err(HostMaterializationError::TooLarge { .. })
         ));
     }
 }

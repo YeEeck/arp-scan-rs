@@ -12,7 +12,10 @@ mod ip_box;
 pub mod runtime;
 pub mod probe;
 
-pub use ip_box::{first_ip, host_count, host_iter, hosts, next_ip, HostIter, HostMaterializeError};
+pub use ip_box::{
+    first_ip, host_count, host_iter, hosts, next_ip, HostIter, HostMaterializationError,
+    HostMaterializeError,
+};
 pub use runtime::{next_task_id, ScanEvent, ScanTask};
 pub use probe::{ArpProbe, SystemArpProbe};
 
