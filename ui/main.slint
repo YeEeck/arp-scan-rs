@@ -44,6 +44,7 @@ export component MainWindow inherits Window {
 
         GroupBox {
             title: "CIDR";
+            vertical-stretch: 0;
 
             LineEdit {
                 min-height: root.control-min-height;
@@ -56,6 +57,7 @@ export component MainWindow inherits Window {
 
         HorizontalLayout {
             spacing: root.control_row_spacing;
+            vertical-stretch: 0;
 
             Button {
                 min-height: root.control-min-height;
@@ -80,11 +82,13 @@ export component MainWindow inherits Window {
             text: root.status_text;
             font-size: root.status_font_size;
             font-weight: 600;
+            vertical-stretch: 0;
         }
 
         Text {
             text: root.progress_text;
             font-size: root.status_font_size;
+            vertical-stretch: 0;
         }
 
         Rectangle {
