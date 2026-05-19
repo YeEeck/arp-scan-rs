@@ -4,16 +4,17 @@
 repository-owned Docker workflow for building a Windows x64 executable from a
 Linux host.
 
-## Current Artifact
+## Build Output Location
 
-The latest Windows build artifact currently lives at:
+When the Windows build workflow succeeds, the executable is written to:
 
 ```text
 dist/windows-x64/arp-scan-rs.exe
 ```
 
-This path is the stable output location for the Docker cross-build workflow.
-The `dist/` directory is generated output and is ignored by git.
+This is the stable output location for the Docker cross-build workflow. The
+`dist/` directory is generated output and is ignored by git, so a fresh checkout
+will not contain the `.exe` until you run the build script.
 
 ## What This Repository Supports
 
@@ -30,7 +31,8 @@ To use the Windows build workflow from Linux, you need:
 
 - Docker installed
 - Docker daemon running
-- Permission to run `docker build`, `docker create`, and `docker cp`
+- Permission to run `docker build`, `docker create`, `docker cp`, and
+  `docker rm -f`
 
 You do not need to install MinGW, a Windows Rust target, or other cross-build
 toolchains on the host.
