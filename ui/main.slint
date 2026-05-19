@@ -7,8 +7,26 @@ export struct ResultListData {
 
 export component MainWindow inherits Window {
     title: "ArpScan-rs";
-    width: 520px;
-    height: 560px;
+    preferred-width: 720px;
+    preferred-height: 640px;
+    min-width: 560px;
+    min-height: 520px;
+    default-font-family: "Segoe UI";
+    default-font-size: 15px;
+
+    private property <length> page-padding: 24px;
+    private property <length> section-spacing: 14px;
+    private property <length> control-row-spacing: 10px;
+    private property <length> control-min-height: 42px;
+    private property <length> status-font-size: 15px;
+    private property <length> header-font-size: 15px;
+    private property <length> row-font-size: 15px;
+    private property <length> result-header-height: 34px;
+    private property <length> result-row-height: 34px;
+    private property <length> result-panel-padding: 10px;
+    private property <length> result-column-spacing: 14px;
+    private property <length> ip-column-width: 190px;
+    private property <length> mac-column-min-width: 240px;
 
     in property <[ResultListData]> result_list_data_model;
     in-out property <string> cidr;
@@ -21,22 +39,26 @@ export component MainWindow inherits Window {
     callback do_cancel();
 
     VerticalLayout {
-        padding: 20px;
-        spacing: 10px;
+        padding: root.page-padding;
+        spacing: root.section-spacing;
 
         GroupBox {
             title: "CIDR";
+
             LineEdit {
+                min-height: root.control-min-height;
                 placeholder-text: "192.168.1.0/24";
                 text <=> root.cidr;
                 enabled: root.scan_enabled;
+                font-size: root.row_font_size;
             }
         }
 
         HorizontalLayout {
-            spacing: 8px;
+            spacing: root.control_row_spacing;
 
             Button {
+                min-height: root.control-min-height;
                 text: "Scan";
                 enabled: root.scan_enabled;
                 clicked => {
@@ -45,6 +67,7 @@ export component MainWindow inherits Window {
             }
 
             Button {
+                min-height: root.control-min-height;
                 text: "Cancel";
                 enabled: root.cancel_enabled;
                 clicked => {
@@ -55,51 +78,62 @@ export component MainWindow inherits Window {
 
         Text {
             text: root.status_text;
+            font-size: root.status_font_size;
+            font-weight: 600;
         }
 
         Text {
             text: root.progress_text;
+            font-size: root.status_font_size;
         }
 
         Rectangle {
-            height: 380px;
+            height: root.result_header_height + root.result_row_height * 10 + root.result_panel_padding * 2;
+            horizontal-stretch: 1;
             border-width: 1px;
             border-color: #d0d7de;
 
             VerticalLayout {
-                padding: 8px;
-                spacing: 6px;
+                padding: root.result_panel_padding;
+                spacing: root.result_column_spacing;
 
                 Rectangle {
-                    height: 26px;
-                    width: parent.width;
+                    height: root.result_header_height;
+                    horizontal-stretch: 1;
                     HorizontalLayout {
-                        spacing: 12px;
+                        spacing: root.result_column_spacing;
                         Text {
                             text: "IP";
+                            font-size: root.header_font_size;
                             font-weight: 700;
-                            width: 180px;
+                            width: root.ip_column_width;
                         }
                         Text {
                             text: "MAC";
+                            font-size: root.header_font_size;
                             font-weight: 700;
+                            min-width: root.mac_column_min_width;
                         }
                     }
                 }
 
                 ListView {
+                    horizontal-stretch: 1;
                     for row in root.result_list_data_model: Rectangle {
-                        height: 28px;
-                        width: parent.width;
+                        height: root.result_row_height;
+                        horizontal-stretch: 1;
 
                         HorizontalLayout {
-                            spacing: 12px;
+                            spacing: root.result_column_spacing;
                             Text {
                                 text: row.ip;
-                                width: 180px;
+                                font-size: root.row_font_size;
+                                width: root.ip_column_width;
                             }
                             Text {
                                 text: row.mac;
+                                font-size: root.row_font_size;
+                                min-width: root.mac_column_min_width;
                             }
                         }
                     }
