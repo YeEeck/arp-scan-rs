@@ -1,3 +1,6 @@
+use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::Arc;
+
 use arp_scan_rs::scan_master::{scan_by_arp, scan_by_arp_with_probe, ArpProbe, SystemArpProbe};
 
 struct FakeProbe;
@@ -13,25 +16,18 @@ impl ArpProbe for FakeProbe {
 }
 
 struct FailingProbe {
-    calls: std::cell::Cell<usize>,
+    calls: Arc<AtomicUsize>,
 }
 
 impl FailingProbe {
-    fn new() -> Self {
-        Self {
-            calls: std::cell::Cell::new(0),
-        }
-    }
-
-    fn calls(&self) -> usize {
-        self.calls.get()
+    fn new(calls: Arc<AtomicUsize>) -> Self {
+        Self { calls }
     }
 }
 
 impl ArpProbe for FailingProbe {
     fn probe(&self, _ip: &str) -> std::io::Result<Option<[u8; 6]>> {
-        let next_call = self.calls.get() + 1;
-        self.calls.set(next_call);
+        let next_call = self.calls.fetch_add(1, Ordering::Relaxed) + 1;
 
         if next_call == 2 {
             Err(std::io::Error::new(std::io::ErrorKind::TimedOut, "boom"))
@@ -63,11 +59,12 @@ fn scan_core_accepts_an_injected_probe() {
 
 #[test]
 fn injected_probe_error_is_returned() {
-    let probe = FailingProbe::new();
+    let calls = Arc::new(AtomicUsize::new(0));
+    let probe = FailingProbe::new(Arc::clone(&calls));
     let err = scan_by_arp_with_probe("192.168.1.0/30", &probe).unwrap_err();
 
     assert_eq!(err.kind(), std::io::ErrorKind::TimedOut);
-    assert_eq!(probe.calls(), 2);
+    assert_eq!(calls.load(Ordering::Relaxed), 2);
 }
 
 #[cfg(not(target_os = "windows"))]

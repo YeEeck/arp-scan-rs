@@ -1,4 +1,6 @@
 use std::io;
+use std::sync::mpsc;
+use std::thread;
 
 mod arp_core;
 mod ip_box;
@@ -12,7 +14,6 @@ pub use ip_box::{
 pub use probe::{ArpProbe, SystemArpProbe};
 pub use runtime::{next_task_id, start_scan, start_scan_with_probe, ScanEvent, ScanTask};
 
-#[cfg(target_os = "windows")]
 const DEFAULT_MAX_IN_FLIGHT: usize = 256;
 
 #[cfg(target_os = "windows")]
@@ -30,26 +31,82 @@ pub fn scan_by_arp(_cidr: &str) -> io::Result<Vec<IpCheckResult>> {
 
 pub fn scan_by_arp_with_probe<P>(cidr: &str, probe: P) -> io::Result<Vec<IpCheckResult>>
 where
-    P: ArpProbe,
+    P: ArpProbe + Sync,
 {
-    let mut avaliable_node_list: Vec<IpCheckResult> = Vec::new();
-    let first_ip_addr_str = ip_box::first_ip(cidr).ok_or(io::Error::new(io::ErrorKind::InvalidInput, "No avaliable ip addr."))?;
-    let mut ip_string = first_ip_addr_str;
-    loop {
-        let result = check_ip_exist_with_probe(&ip_string, &probe)?;
-        if result.exist {
-            avaliable_node_list.push(result);
-        }
+    let mut hosts = host_iter(cidr)
+        .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidInput, "Invalid CIDR"))?;
+    let (result_tx, result_rx) = mpsc::channel();
+    let probe = &probe;
+    let mut in_flight = 0usize;
+    let mut dispatch_index = 0usize;
+    let mut dispatch_exhausted = false;
+    let mut terminal_error = None;
+    let mut results = Vec::new();
 
-        match ip_box::next_ip(cidr, &ip_string) {
-            Some(ip) => {
-                ip_string = ip;
+    thread::scope(|scope| {
+        while !dispatch_exhausted || in_flight > 0 {
+            while terminal_error.is_none()
+                && !dispatch_exhausted
+                && in_flight < DEFAULT_MAX_IN_FLIGHT
+            {
+                let Some(ip) = hosts.next() else {
+                    dispatch_exhausted = true;
+                    break;
+                };
+
+                let result_tx = result_tx.clone();
+                let sequence = dispatch_index;
+                dispatch_index += 1;
+                in_flight += 1;
+
+                scope.spawn(move || {
+                    let result = probe.probe(&ip).map(|maybe_mac| maybe_mac.map(format_mac));
+                    let _ = result_tx.send((sequence, ip, result));
+                });
             }
-            None => break,
+
+            if in_flight == 0 {
+                break;
+            }
+
+            let probe_result = match result_rx.recv() {
+                Ok(probe_result) => probe_result,
+                Err(_) => {
+                    terminal_error.get_or_insert_with(|| {
+                        io::Error::other("probe worker channel closed unexpectedly")
+                    });
+                    break;
+                }
+            };
+
+            in_flight -= 1;
+
+            let (sequence, ip, result) = probe_result;
+            match result {
+                Ok(Some(mac)) if terminal_error.is_none() => {
+                    results.push((
+                        sequence,
+                        IpCheckResult {
+                            ip,
+                            mac,
+                            exist: true,
+                        },
+                    ));
+                }
+                Ok(Some(_)) | Ok(None) => {}
+                Err(err) => {
+                    terminal_error.get_or_insert(err);
+                }
+            }
         }
+    });
+
+    if let Some(err) = terminal_error {
+        return Err(err);
     }
 
-    Ok(avaliable_node_list)
+    results.sort_by_key(|(sequence, _)| *sequence);
+    Ok(results.into_iter().map(|(_, result)| result).collect())
 }
 
 #[derive(Clone, Debug)]
@@ -57,23 +114,6 @@ pub struct IpCheckResult {
     pub ip: String,
     pub mac: String,
     pub exist: bool,
-}
-
-fn check_ip_exist_with_probe<P: ArpProbe + ?Sized>(ip_str: &str, probe: &P) -> io::Result<IpCheckResult> {
-    let mut result = IpCheckResult {
-        ip: ip_str.to_string(),
-        mac: String::new(),
-        exist: false,
-    };
-    if let Some(mac) = probe.probe(ip_str)? {
-        result.mac = format!(
-            "{:02X}:{:02X}:{:02X}:{:02X}:{:02X}:{:02X}",
-            mac[0], mac[1], mac[2], mac[3], mac[4], mac[5]
-        );
-        result.exist = true;
-    }
-
-    Ok(result)
 }
 
 #[cfg(target_os = "windows")]
@@ -110,4 +150,11 @@ fn collect_scan_results(task: ScanTask) -> io::Result<Vec<IpCheckResult>> {
     }
 
     Ok(results)
+}
+
+fn format_mac(mac: [u8; 6]) -> String {
+    format!(
+        "{:02X}:{:02X}:{:02X}:{:02X}:{:02X}:{:02X}",
+        mac[0], mac[1], mac[2], mac[3], mac[4], mac[5]
+    )
 }
