@@ -103,12 +103,12 @@ export component MainWindow inherits Window {
                 Rectangle {
                     clip: true;
                     vertical-stretch: 0;
-                    min-height: root.result-header-height;
+                    height: root.result-header-height;
                     background: #f6f8fa;
 
                     header-layout := HorizontalLayout {
                         spacing: root.result-column-spacing;
-                        min-height: root.result-header-height;
+                        height: root.result-header-height;
 
                         Rectangle {
                             min-width: root.ip-column-width;
