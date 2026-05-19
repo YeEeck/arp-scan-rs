@@ -45,6 +45,8 @@ fn parse_cidr(cidr: &str) -> Option<(u32, u32, u8)> {
 ///
 /// # 示例
 /// ```
+/// use arp_scan_rs::scan_master::first_ip;
+///
 /// // 标准/24网络，跳过网络地址
 /// assert_eq!(first_ip("192.168.1.0/24"), Some("192.168.1.1".to_string()));
 ///
@@ -85,6 +87,8 @@ pub fn first_ip(cidr: &str) -> Option<String> {
 ///
 /// # 示例
 /// ```
+/// use arp_scan_rs::scan_master::next_ip;
+///
 /// // 基本用例
 /// assert_eq!(
 ///     next_ip("192.168.1.0/24", "192.168.1.123"),

@@ -3,8 +3,7 @@
 use clap::Parser;
 use slint::{Model, ModelRc, VecModel};
 use std::rc::Rc;
-
-mod scan_master;
+use arp_scan_rs::scan_master;
 
 #[derive(Parser)]
 #[command(version, author, about, long_about = None)]

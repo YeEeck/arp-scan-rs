@@ -16,7 +16,7 @@ pub fn get_mac_address(ip: u32) -> io::Result<[u8; 6]> {
     const NO_ERROR: u32 = 0;
 
     #[link(name = "Iphlpapi")]
-    extern "system" {
+    unsafe extern "system" {
         fn SendARP(destIp: u32, srcIp: u32, macAddr: *mut u8, phyAddrLen: *mut u32) -> u32;
     }
 

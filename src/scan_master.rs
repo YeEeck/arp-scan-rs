@@ -7,19 +7,31 @@ mod arp_core;
 mod ip_box;
 pub mod probe;
 
+pub use ip_box::{first_ip, next_ip};
 pub use probe::{ArpProbe, SystemArpProbe};
 
 pub fn scan_by_arp(cidr: &str) -> io::Result<Vec<IpCheckResult>> {
+    scan_by_arp_with_probe(cidr, SystemArpProbe)
+}
+
+pub fn scan_by_arp_with_probe<P>(cidr: &str, probe: P) -> io::Result<Vec<IpCheckResult>>
+where
+    P: ArpProbe + Send + Sync + 'static,
+{
     let avaliable_node_list: Arc<Mutex<Vec<IpCheckResult>>> = Arc::new(Mutex::new(Vec::new()));
     let first_ip_addr_str = ip_box::first_ip(cidr).ok_or(io::Error::new(io::ErrorKind::InvalidInput, "No avaliable ip addr."))?;
     let mut ip_string = first_ip_addr_str;
     let mut handle_vec: Vec<JoinHandle<()>> = Vec::new();
+    let probe = Arc::new(probe);
+    let first_error: Arc<Mutex<Option<(io::ErrorKind, String)>>> = Arc::new(Mutex::new(None));
     loop {
         //println!("current_ip: {}", ip_string);
         let avaliable_node_list_shared_clone = Arc::clone(&avaliable_node_list);
+        let first_error_shared_clone = Arc::clone(&first_error);
+        let probe_shared_clone = Arc::clone(&probe);
         let ip_string_cur_temp = ip_string.clone();
         let handle = thread::spawn(
-            move || match check_ip_exist(&(ip_string_cur_temp.clone())) {
+            move || match check_ip_exist_with_probe(&(ip_string_cur_temp.clone()), probe_shared_clone.as_ref()) {
                 Ok(result) => {
                     if result.exist {
                         let mut avaliable_node_list_guard =
@@ -29,7 +41,10 @@ pub fn scan_by_arp(cidr: &str) -> io::Result<Vec<IpCheckResult>> {
                     }
                 }
                 Err(e) => {
-                    println!("Error: {e}");
+                    let mut first_error_guard = first_error_shared_clone.lock().unwrap();
+                    if first_error_guard.is_none() {
+                        *first_error_guard = Some((e.kind(), e.to_string()));
+                    }
                 }
             },
         );
@@ -49,6 +64,12 @@ pub fn scan_by_arp(cidr: &str) -> io::Result<Vec<IpCheckResult>> {
             println!("Thread handle error: {:?}", e);
         }
     }
+
+    let mut first_error_guard = first_error.lock().unwrap();
+    if let Some((kind, message)) = first_error_guard.take() {
+        return Err(io::Error::new(kind, message));
+    }
+
     Ok(avaliable_node_list.lock().unwrap().to_vec())
 }
 
@@ -59,19 +80,17 @@ pub struct IpCheckResult {
     pub exist: bool,
 }
 
-fn check_ip_exist(ip_str: &str) -> io::Result<IpCheckResult> {
+fn check_ip_exist_with_probe<P: ArpProbe + ?Sized>(ip_str: &str, probe: &P) -> io::Result<IpCheckResult> {
     let mut result = IpCheckResult {
         ip: ip_str.to_string(),
         mac: String::new(),
         exist: false,
     };
-    let probe = SystemArpProbe;
-    if let Ok(mac) = probe.probe(ip_str) {
+    if let Some(mac) = probe.probe(ip_str)? {
         result.mac = format!(
             "{:02X}:{:02X}:{:02X}:{:02X}:{:02X}:{:02X}",
             mac[0], mac[1], mac[2], mac[3], mac[4], mac[5]
-        )
-        .to_string();
+        );
         result.exist = true;
     }
 
