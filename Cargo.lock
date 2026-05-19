@@ -274,6 +274,7 @@ name = "arp-scan-rs"
 version = "0.1.0"
 dependencies = [
  "clap",
+ "i-slint-backend-testing",
  "slint",
  "slint-build",
  "windows 0.52.0",
@@ -2037,6 +2038,16 @@ dependencies = [
  "i-slint-common",
  "i-slint-core",
  "i-slint-core-macros",
+]
+
+[[package]]
+name = "i-slint-backend-testing"
+version = "1.14.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "fbd66b6b882f03f24f7aa871e778810b17f20c6605e51e85b0afb66f7e14ad91"
+dependencies = [
+ "i-slint-core",
+ "vtable",
 ]
 
 [[package]]

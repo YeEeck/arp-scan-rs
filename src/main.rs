@@ -5,10 +5,9 @@ use std::sync::{Arc, Mutex};
 use std::thread;
 
 use arp_scan_rs::scan_master::{start_scan, ScanEvent, ScanTask};
+use arp_scan_rs::ui::{MainWindow, ResultListData};
 use arp_scan_rs::ui_state::{RowMutation, ScanUiState, ViewState};
-use slint::{Model, ModelRc, VecModel};
-
-slint::include_modules!();
+use slint::{ComponentHandle, Model, ModelRc, VecModel};
 
 const MAX_IN_FLIGHT: usize = 256;
 
