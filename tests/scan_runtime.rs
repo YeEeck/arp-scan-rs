@@ -1,0 +1,220 @@
+use std::io;
+use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::{mpsc, Arc, Mutex};
+use std::time::Duration;
+
+use arp_scan_rs::scan_master::{start_scan_with_probe, ArpProbe, ScanEvent, ScanTask};
+
+#[derive(Clone)]
+struct ControlledProbe {
+    active: Arc<AtomicUsize>,
+    peak: Arc<AtomicUsize>,
+    started_tx: mpsc::Sender<String>,
+    permits: Arc<Mutex<mpsc::Receiver<()>>>,
+}
+
+impl ArpProbe for ControlledProbe {
+    fn probe(&self, ip: &str) -> io::Result<Option<[u8; 6]>> {
+        let current = self.active.fetch_add(1, Ordering::SeqCst) + 1;
+        self.peak.fetch_max(current, Ordering::SeqCst);
+        self.started_tx
+            .send(ip.to_string())
+            .expect("test should receive probe start notifications");
+
+        let permit_result = self
+            .permits
+            .lock()
+            .expect("probe permits should not be poisoned")
+            .recv_timeout(Duration::from_secs(2));
+
+        self.active.fetch_sub(1, Ordering::SeqCst);
+
+        match permit_result {
+            Ok(()) => {
+                if ip.ends_with(".1") {
+                    Ok(Some([0xAA, 0xBB, 0xCC, 0xDD, 0xEE, 0x01]))
+                } else if ip.ends_with(".2") {
+                    Ok(Some([0xAA, 0xBB, 0xCC, 0xDD, 0xEE, 0x02]))
+                } else {
+                    Ok(None)
+                }
+            }
+            Err(mpsc::RecvTimeoutError::Timeout) => Err(io::Error::new(
+                io::ErrorKind::TimedOut,
+                "probe release timed out",
+            )),
+            Err(mpsc::RecvTimeoutError::Disconnected) => Err(io::Error::new(
+                io::ErrorKind::BrokenPipe,
+                "probe release channel disconnected",
+            )),
+        }
+    }
+}
+
+fn drain_task(task: ScanTask) -> Vec<ScanEvent> {
+    let ScanTask {
+        events,
+        join_handle,
+        ..
+    } = task;
+
+    join_handle.join().expect("scan task should join cleanly");
+    events.iter().collect()
+}
+
+#[test]
+fn runtime_rejects_zero_max_in_flight() {
+    let (started_tx, _started_rx) = mpsc::channel();
+    let (_permit_tx, permit_rx) = mpsc::channel();
+    let probe = ControlledProbe {
+        active: Arc::new(AtomicUsize::new(0)),
+        peak: Arc::new(AtomicUsize::new(0)),
+        started_tx,
+        permits: Arc::new(Mutex::new(permit_rx)),
+    };
+
+    let err = start_scan_with_probe("192.168.1.0/30", 0, Arc::new(probe)).unwrap_err();
+
+    assert_eq!(err.kind(), io::ErrorKind::InvalidInput);
+}
+
+#[test]
+fn runtime_respects_max_in_flight_and_streams_terminal_event() {
+    let active = Arc::new(AtomicUsize::new(0));
+    let peak = Arc::new(AtomicUsize::new(0));
+    let (started_tx, started_rx) = mpsc::channel();
+    let (permit_tx, permit_rx) = mpsc::channel();
+    let probe = ControlledProbe {
+        active: Arc::clone(&active),
+        peak: Arc::clone(&peak),
+        started_tx,
+        permits: Arc::new(Mutex::new(permit_rx)),
+    };
+
+    let task = start_scan_with_probe("192.168.1.0/29", 2, Arc::new(probe)).unwrap();
+
+    let mut started = vec![
+        started_rx
+            .recv_timeout(Duration::from_secs(1))
+            .expect("first probe should start"),
+        started_rx
+            .recv_timeout(Duration::from_secs(1))
+            .expect("second probe should start"),
+    ];
+    started.sort();
+
+    assert_eq!(
+        started,
+        vec!["192.168.1.1".to_string(), "192.168.1.2".to_string()]
+    );
+    assert_eq!(peak.load(Ordering::SeqCst), 2);
+    assert_eq!(
+        started_rx.recv_timeout(Duration::from_millis(150)),
+        Err(mpsc::RecvTimeoutError::Timeout)
+    );
+
+    for _ in 0..6 {
+        permit_tx.send(()).unwrap();
+    }
+
+    let events = drain_task(task);
+    let mut all_started: Vec<_> = started_rx.try_iter().collect();
+    all_started.extend(started);
+    all_started.sort();
+
+    let progress_updates: Vec<_> = events
+        .iter()
+        .filter_map(|event| match event {
+            ScanEvent::Progress { scanned_hosts, .. } => Some(*scanned_hosts),
+            _ => None,
+        })
+        .collect();
+    let found_hosts: Vec<_> = events
+        .iter()
+        .filter_map(|event| match event {
+            ScanEvent::HostFound { ip, mac, .. } => Some((ip.clone(), mac.clone())),
+            _ => None,
+        })
+        .collect();
+
+    assert_eq!(
+        all_started,
+        vec![
+            "192.168.1.1".to_string(),
+            "192.168.1.2".to_string(),
+            "192.168.1.3".to_string(),
+            "192.168.1.4".to_string(),
+            "192.168.1.5".to_string(),
+            "192.168.1.6".to_string(),
+        ]
+    );
+    assert!(matches!(
+        events.first(),
+        Some(ScanEvent::Started {
+            total_hosts: 6,
+            ..
+        })
+    ));
+    let mut found_hosts = found_hosts;
+    found_hosts.sort();
+    assert_eq!(
+        found_hosts,
+        vec![
+            ("192.168.1.1".to_string(), "AA:BB:CC:DD:EE:01".to_string()),
+            ("192.168.1.2".to_string(), "AA:BB:CC:DD:EE:02".to_string()),
+        ]
+    );
+    assert_eq!(progress_updates, vec![1, 2, 3, 4, 5, 6]);
+    assert!(matches!(
+        events.last(),
+        Some(ScanEvent::Finished {
+            scanned_hosts: 6,
+            found_hosts: 2,
+            ..
+        })
+    ));
+}
+
+#[test]
+fn runtime_cancellation_stops_dispatch_and_preserves_completed_results() {
+    let active = Arc::new(AtomicUsize::new(0));
+    let peak = Arc::new(AtomicUsize::new(0));
+    let (started_tx, started_rx) = mpsc::channel();
+    let (permit_tx, permit_rx) = mpsc::channel();
+    let probe = ControlledProbe {
+        active,
+        peak,
+        started_tx,
+        permits: Arc::new(Mutex::new(permit_rx)),
+    };
+
+    let task = start_scan_with_probe("192.168.1.0/29", 1, Arc::new(probe)).unwrap();
+
+    assert_eq!(
+        started_rx
+            .recv_timeout(Duration::from_secs(1))
+            .expect("first probe should start"),
+        "192.168.1.1".to_string()
+    );
+
+    task.cancel_flag.store(true, Ordering::SeqCst);
+    permit_tx.send(()).unwrap();
+
+    let events = drain_task(task);
+    let remaining_starts: Vec<_> = started_rx.try_iter().collect();
+
+    assert!(remaining_starts.is_empty());
+    assert!(events.iter().any(|event| matches!(
+        event,
+        ScanEvent::HostFound { ip, mac, .. }
+            if ip == "192.168.1.1" && mac == "AA:BB:CC:DD:EE:01"
+    )));
+    assert!(matches!(
+        events.last(),
+        Some(ScanEvent::Cancelled {
+            scanned_hosts: 1,
+            found_hosts: 1,
+            ..
+        })
+    ));
+}

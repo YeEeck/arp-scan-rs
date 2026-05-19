@@ -16,7 +16,7 @@ pub use ip_box::{
     first_ip, host_count, host_iter, hosts, next_ip, HostIter, HostMaterializationError,
     HostMaterializeError,
 };
-pub use runtime::{next_task_id, ScanEvent, ScanTask};
+pub use runtime::{next_task_id, start_scan, start_scan_with_probe, ScanEvent, ScanTask};
 pub use probe::{ArpProbe, SystemArpProbe};
 
 #[cfg(target_os = "windows")]
