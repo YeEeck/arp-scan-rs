@@ -9,9 +9,11 @@ use std::thread::JoinHandle;
 
 mod arp_core;
 mod ip_box;
+pub mod runtime;
 pub mod probe;
 
-pub use ip_box::{first_ip, next_ip};
+pub use ip_box::{first_ip, host_count, hosts, next_ip};
+pub use runtime::{next_task_id, ScanEvent, ScanTask};
 pub use probe::{ArpProbe, SystemArpProbe};
 
 #[cfg(target_os = "windows")]
