@@ -1,4 +1,5 @@
 use std::io;
+use std::panic::{self, AssertUnwindSafe};
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::mpsc::{self, Receiver};
 use std::sync::Arc;
@@ -111,9 +112,14 @@ where
 }
 
 #[derive(Debug)]
-struct ProbeResult {
-    ip: String,
-    result: io::Result<Option<[u8; 6]>>,
+enum ProbeResult {
+    Completed {
+        ip: String,
+        result: io::Result<Option<[u8; 6]>>,
+    },
+    WorkerPanicked {
+        ip: String,
+    },
 }
 
 fn run_scan_loop<P>(
@@ -149,8 +155,12 @@ fn run_scan_loop<P>(
             in_flight += 1;
 
             thread::spawn(move || {
-                let result = probe.probe(&ip);
-                let _ = result_tx.send(ProbeResult { ip, result });
+                let probe_result = match panic::catch_unwind(AssertUnwindSafe(|| probe.probe(&ip)))
+                {
+                    Ok(result) => ProbeResult::Completed { ip, result },
+                    Err(_) => ProbeResult::WorkerPanicked { ip },
+                };
+                let _ = result_tx.send(probe_result);
             });
         }
 
@@ -170,33 +180,45 @@ fn run_scan_loop<P>(
         };
 
         in_flight -= 1;
-        scanned_hosts += 1;
 
-        match probe_result.result {
-            Ok(Some(mac)) => {
-                found_hosts += 1;
-                let _ = event_tx.send(ScanEvent::HostFound {
+        match probe_result {
+            ProbeResult::Completed { ip, result } => {
+                scanned_hosts += 1;
+
+                match result {
+                    Ok(Some(mac)) => {
+                        found_hosts += 1;
+                        let _ = event_tx.send(ScanEvent::HostFound {
+                            task_id,
+                            ip,
+                            mac: format_mac(mac),
+                        });
+                    }
+                    Ok(None) => {}
+                    Err(err) if err.kind() == io::ErrorKind::Unsupported => {
+                        let _ = event_tx.send(ScanEvent::Failed {
+                            task_id,
+                            message: err.to_string(),
+                        });
+                        return;
+                    }
+                    Err(_) => {}
+                }
+
+                let _ = event_tx.send(ScanEvent::Progress {
                     task_id,
-                    ip: probe_result.ip,
-                    mac: format_mac(mac),
+                    scanned_hosts,
+                    total_hosts,
                 });
             }
-            Ok(None) => {}
-            Err(err) if err.kind() == io::ErrorKind::Unsupported => {
+            ProbeResult::WorkerPanicked { ip } => {
                 let _ = event_tx.send(ScanEvent::Failed {
                     task_id,
-                    message: err.to_string(),
+                    message: format!("probe worker panicked before sending a result for {ip}"),
                 });
                 return;
             }
-            Err(_) => {}
         }
-
-        let _ = event_tx.send(ScanEvent::Progress {
-            task_id,
-            scanned_hosts,
-            total_hosts,
-        });
     }
 
     let terminal_event = if cancel_flag.load(Ordering::Relaxed) {

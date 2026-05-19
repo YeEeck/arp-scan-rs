@@ -218,3 +218,40 @@ fn runtime_cancellation_stops_dispatch_and_preserves_completed_results() {
         })
     ));
 }
+
+#[derive(Clone)]
+struct PanickingProbe;
+
+impl ArpProbe for PanickingProbe {
+    fn probe(&self, _ip: &str) -> io::Result<Option<[u8; 6]>> {
+        panic!("probe worker panicked before sending a result");
+    }
+}
+
+#[test]
+fn runtime_emits_failed_when_probe_worker_exits_before_send() {
+    let task = start_scan_with_probe("192.168.1.10/32", 1, Arc::new(PanickingProbe)).unwrap();
+
+    assert!(matches!(
+        task.events.recv_timeout(Duration::from_secs(1)),
+        Ok(ScanEvent::Started {
+            total_hosts: 1,
+            ..
+        })
+    ));
+
+    let failure = task
+        .events
+        .recv_timeout(Duration::from_millis(300))
+        .expect("expected a failure event instead of a blocked scan");
+
+    assert!(matches!(
+        failure,
+        ScanEvent::Failed { ref message, .. }
+            if message.contains("probe worker panicked before sending a result")
+    ));
+
+    task.join_handle
+        .join()
+        .expect("scan task should exit cleanly after reporting failure");
+}
