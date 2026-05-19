@@ -71,11 +71,19 @@ impl Iterator for HostIter {
     }
 }
 
+/// Returns the number of usable hosts in a CIDR range.
+///
+/// This follows the standard `/31` and `/32` rules used elsewhere in this
+/// module.
 pub fn host_count(cidr: &str) -> Option<usize> {
     let (first_usable, last_usable) = usable_range(cidr)?;
     Some((last_usable - first_usable + 1) as usize)
 }
 
+/// Materializes all usable hosts for a CIDR range when the range is small enough.
+///
+/// Large valid CIDRs are intentionally bounded; for streaming access use
+/// [`host_iter()`] instead.
 pub fn hosts(cidr: &str) -> Option<Vec<String>> {
     let total_hosts = host_count(cidr)?;
     if total_hosts > MAX_MATERIALIZED_HOSTS {
@@ -85,6 +93,7 @@ pub fn hosts(cidr: &str) -> Option<Vec<String>> {
     Some(host_iter(cidr)?.collect())
 }
 
+/// Returns a lazy iterator over all usable hosts in a CIDR range.
 pub fn host_iter(cidr: &str) -> Option<HostIter> {
     let (first_usable, last_usable) = usable_range(cidr)?;
     Some(HostIter {

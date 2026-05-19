@@ -23,6 +23,7 @@ fn invalid_cidr_returns_none_or_error() {
 #[test]
 fn large_cidr_uses_lazy_iteration() {
     assert_eq!(host_count("10.0.0.0/8"), Some(16_777_214));
+    assert!(hosts("10.0.0.0/8").is_none());
 
     let mut iter = host_iter("10.0.0.0/8").expect("expected lazy iterator for valid cidr");
     assert_eq!(iter.next().as_deref(), Some("10.0.0.1"));
