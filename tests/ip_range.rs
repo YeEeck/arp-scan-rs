@@ -1,4 +1,4 @@
-use arp_scan_rs::scan_master::{host_count, host_iter, hosts};
+use arp_scan_rs::scan_master::{host_count, host_iter, hosts, HostMaterializeError};
 
 #[test]
 fn hosts_and_counts_follow_cidr_rules() {
@@ -17,13 +17,19 @@ fn hosts_and_counts_follow_cidr_rules() {
 #[test]
 fn invalid_cidr_returns_none_or_error() {
     assert_eq!(host_count("bad"), None);
-    assert!(hosts("192.168.1.0/33").is_none());
+    assert!(matches!(
+        hosts("192.168.1.0/33"),
+        Err(HostMaterializeError::InvalidCidr)
+    ));
 }
 
 #[test]
 fn large_cidr_uses_lazy_iteration() {
     assert_eq!(host_count("10.0.0.0/8"), Some(16_777_214));
-    assert!(hosts("10.0.0.0/8").is_none());
+    assert!(matches!(
+        hosts("10.0.0.0/8"),
+        Err(HostMaterializeError::TooLarge { .. })
+    ));
 
     let mut iter = host_iter("10.0.0.0/8").expect("expected lazy iterator for valid cidr");
     assert_eq!(iter.next().as_deref(), Some("10.0.0.1"));

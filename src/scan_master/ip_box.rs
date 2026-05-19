@@ -2,6 +2,12 @@ use std::net::Ipv4Addr;
 
 const MAX_MATERIALIZED_HOSTS: usize = 4_096;
 
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum HostMaterializeError {
+    InvalidCidr,
+    TooLarge { total_hosts: usize, max_hosts: usize },
+}
+
 fn parse_cidr(cidr: &str) -> Option<(u32, u8)> {
     let (net_str, prefix_len_str) = cidr.split_once('/')?;
     let net_ip: Ipv4Addr = net_str.parse().ok()?;
@@ -84,13 +90,18 @@ pub fn host_count(cidr: &str) -> Option<usize> {
 ///
 /// Large valid CIDRs are intentionally bounded; for streaming access use
 /// [`host_iter()`] instead.
-pub fn hosts(cidr: &str) -> Option<Vec<String>> {
-    let total_hosts = host_count(cidr)?;
+pub fn hosts(cidr: &str) -> Result<Vec<String>, HostMaterializeError> {
+    let total_hosts = host_count(cidr).ok_or(HostMaterializeError::InvalidCidr)?;
     if total_hosts > MAX_MATERIALIZED_HOSTS {
-        return None;
+        return Err(HostMaterializeError::TooLarge {
+            total_hosts,
+            max_hosts: MAX_MATERIALIZED_HOSTS,
+        });
     }
 
-    Some(host_iter(cidr)?.collect())
+    host_iter(cidr)
+        .map(|iter| iter.collect())
+        .ok_or(HostMaterializeError::InvalidCidr)
 }
 
 /// Returns a lazy iterator over all usable hosts in a CIDR range.
@@ -269,6 +280,9 @@ mod tests {
 
     #[test]
     fn test_hosts_refuses_large_materialization() {
-        assert!(hosts("10.0.0.0/8").is_none());
+        assert!(matches!(
+            hosts("10.0.0.0/8"),
+            Err(HostMaterializeError::TooLarge { .. })
+        ));
     }
 }
