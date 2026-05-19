@@ -24,6 +24,7 @@ export component MainWindow inherits Window {
     private property <length> result-header-height: 28px;
     private property <length> result-row-height: 30px;
     private property <length> result-column-spacing: 12px;
+    private property <length> result-scrollbar-gutter: 14px;
     private property <length> ip-column-width: 180px;
     private property <length> mac-column-min-width: 0px;
     private property <length> header-font-size: 15px;
@@ -107,43 +108,54 @@ export component MainWindow inherits Window {
                     background: #f6f8fa;
 
                     header-layout := HorizontalLayout {
-                        spacing: root.result-column-spacing;
                         height: root.result-header-height;
+                        spacing: 0px;
 
-                        Rectangle {
-                            min-width: root.ip-column-width;
-                            preferred-width: root.ip-column-width;
-                            max-width: root.ip-column-width;
+                        HorizontalLayout {
+                            spacing: root.result-column-spacing;
+                            horizontal-stretch: 1;
 
-                            Text {
-                                width: 100%;
-                                height: 100%;
-                                text: "IP";
-                                font-size: root.header-font-size;
-                                font-weight: 700;
-                                vertical-alignment: center;
-                                overflow: elide;
+                            Rectangle {
+                                min-width: root.ip-column-width;
+                                preferred-width: root.ip-column-width;
+                                max-width: root.ip-column-width;
+
+                                Text {
+                                    width: 100%;
+                                    height: 100%;
+                                    text: "IP";
+                                    font-size: root.header-font-size;
+                                    font-weight: 700;
+                                    vertical-alignment: center;
+                                    overflow: elide;
+                                }
+                            }
+
+                            Rectangle {
+                                min-width: root.mac-column-min-width;
+                                horizontal-stretch: 1;
+
+                                Text {
+                                    width: 100%;
+                                    height: 100%;
+                                    text: "MAC";
+                                    font-size: root.header-font-size;
+                                    font-weight: 700;
+                                    vertical-alignment: center;
+                                    overflow: elide;
+                                }
                             }
                         }
 
                         Rectangle {
-                            min-width: root.mac-column-min-width;
-                            horizontal-stretch: 1;
-
-                            Text {
-                                width: 100%;
-                                height: 100%;
-                                text: "MAC";
-                                font-size: root.header-font-size;
-                                font-weight: 700;
-                                vertical-alignment: center;
-                                overflow: elide;
-                            }
+                            min-width: root.result-scrollbar-gutter;
+                            preferred-width: root.result-scrollbar-gutter;
+                            max-width: root.result-scrollbar-gutter;
                         }
                     }
                 }
 
-                ListView {
+                result-list := ListView {
                     min-height: 0px;
                     horizontal-stretch: 1;
                     vertical-stretch: 1;
@@ -154,37 +166,48 @@ export component MainWindow inherits Window {
                         clip: true;
 
                         HorizontalLayout {
-                            spacing: root.result-column-spacing;
+                            spacing: 0px;
 
-                            Rectangle {
-                                min-width: root.ip-column-width;
-                                preferred-width: root.ip-column-width;
-                                max-width: root.ip-column-width;
-                                clip: true;
+                            HorizontalLayout {
+                                spacing: root.result-column-spacing;
+                                horizontal-stretch: 1;
 
-                                Text {
-                                    width: 100%;
-                                    height: 100%;
-                                    text: row.ip;
-                                    font-size: root.row-font-size;
-                                    vertical-alignment: center;
-                                    overflow: elide;
+                                Rectangle {
+                                    min-width: root.ip-column-width;
+                                    preferred-width: root.ip-column-width;
+                                    max-width: root.ip-column-width;
+                                    clip: true;
+
+                                    Text {
+                                        width: 100%;
+                                        height: 100%;
+                                        text: row.ip;
+                                        font-size: root.row-font-size;
+                                        vertical-alignment: center;
+                                        overflow: elide;
+                                    }
+                                }
+
+                                Rectangle {
+                                    min-width: root.mac-column-min-width;
+                                    horizontal-stretch: 1;
+                                    clip: true;
+
+                                    Text {
+                                        width: 100%;
+                                        height: 100%;
+                                        text: row.mac;
+                                        font-size: root.row-font-size;
+                                        vertical-alignment: center;
+                                        overflow: elide;
+                                    }
                                 }
                             }
 
                             Rectangle {
-                                min-width: root.mac-column-min-width;
-                                horizontal-stretch: 1;
-                                clip: true;
-
-                                Text {
-                                    width: 100%;
-                                    height: 100%;
-                                    text: row.mac;
-                                    font-size: root.row-font-size;
-                                    vertical-alignment: center;
-                                    overflow: elide;
-                                }
+                                min-width: root.result-scrollbar-gutter;
+                                preferred-width: root.result-scrollbar-gutter;
+                                max-width: root.result-scrollbar-gutter;
                             }
                         }
                     }
