@@ -10,7 +10,6 @@ use arp_scan_rs::scan_master::{
 };
 
 const HOSTNAME_WORKER_COUNT: usize = 2;
-const HOSTNAME_QUEUE_CAPACITY: usize = 2;
 
 fn hostname_runtime_test_lock() -> std::sync::MutexGuard<'static, ()> {
     static LOCK: Mutex<()> = Mutex::new(());
@@ -587,9 +586,11 @@ fn runtime_bounds_hostname_resolution_concurrency() {
             "192.168.1.2".to_string(),
             "192.168.1.3".to_string(),
             "192.168.1.4".to_string(),
+            "192.168.1.5".to_string(),
+            "192.168.1.6".to_string(),
         ]
     );
-    assert_eq!(hostname_updates.len(), HOSTNAME_WORKER_COUNT + HOSTNAME_QUEUE_CAPACITY);
+    assert_eq!(hostname_updates.len(), 6);
 }
 
 #[derive(Clone)]
@@ -820,7 +821,7 @@ fn runtime_caps_hostname_workers_across_cancelled_scan_cycles() {
 }
 
 #[test]
-fn runtime_drops_hostname_jobs_when_executor_queue_is_full() {
+fn runtime_eventually_processes_hostname_jobs_when_executor_queue_is_full() {
     let _lock = hostname_runtime_test_lock();
     let host_count = 6;
     let active = Arc::new(AtomicUsize::new(0));
@@ -842,17 +843,62 @@ fn runtime_drops_hostname_jobs_when_executor_queue_is_full() {
     )
     .unwrap();
 
-    let events = drain_task(task);
+    let ScanTask {
+        events,
+        join_handle,
+        ..
+    } = task;
 
-    let hostname_updates: Vec<_> = events
-        .iter()
-        .filter_map(|event| match event {
-            ScanEvent::HostnameResolved { ip, hostname, .. } => Some((ip.clone(), hostname.clone())),
-            _ => None,
-        })
-        .collect();
+    let mut runtime_events = Vec::new();
+    loop {
+        let event = events
+            .recv_timeout(Duration::from_secs(1))
+            .expect("scan should emit events until it finishes");
+        let finished = matches!(
+            event,
+            ScanEvent::Finished {
+                scanned_hosts: 6,
+                found_hosts: 6,
+                ..
+            }
+        );
+        runtime_events.push(event);
+        if finished {
+            break;
+        }
+    }
 
-    assert!(events.iter().any(|event| matches!(
+    let started_before_release: Vec<_> = started_rx.try_iter().collect();
+
+    for _ in 0..host_count {
+        permit_tx.send(()).unwrap();
+    }
+
+    let mut hostname_updates = Vec::new();
+    while hostname_updates.len() < host_count {
+        match events
+            .recv_timeout(Duration::from_secs(1))
+            .expect("hostname jobs should continue after terminal scan event")
+        {
+            ScanEvent::HostnameResolved { ip, hostname, .. } => {
+                hostname_updates.push((ip, hostname));
+            }
+            other => panic!("unexpected trailing event after scan finish: {other:?}"),
+        }
+    }
+
+    join_handle
+        .join()
+        .expect("scan task should join cleanly");
+
+    let mut all_started: Vec<_> = started_rx.try_iter().collect();
+    all_started.extend(started_before_release.iter().cloned());
+    all_started.sort();
+    hostname_updates.sort();
+
+    assert_eq!(peak.load(Ordering::SeqCst), 2);
+    assert_eq!(active.load(Ordering::SeqCst), 0);
+    assert!(runtime_events.iter().any(|event| matches!(
         event,
         ScanEvent::Finished {
             scanned_hosts: 6,
@@ -860,21 +906,29 @@ fn runtime_drops_hostname_jobs_when_executor_queue_is_full() {
             ..
         }
     )));
-    assert_eq!(hostname_updates.len(), 0);
-
-    for _ in 0..(HOSTNAME_WORKER_COUNT + HOSTNAME_QUEUE_CAPACITY) {
-        let _ = permit_tx.send(());
-    }
-
-    thread::sleep(Duration::from_millis(150));
-
-    let all_started: Vec<_> = started_rx.try_iter().collect();
-
-    assert_eq!(peak.load(Ordering::SeqCst), 2);
-    assert_eq!(active.load(Ordering::SeqCst), 0);
+    assert!(!started_before_release.is_empty());
+    assert!(started_before_release.len() <= HOSTNAME_WORKER_COUNT);
     assert_eq!(
-        all_started.len(),
-        HOSTNAME_WORKER_COUNT + HOSTNAME_QUEUE_CAPACITY
+        all_started,
+        vec![
+            "192.168.1.1".to_string(),
+            "192.168.1.2".to_string(),
+            "192.168.1.3".to_string(),
+            "192.168.1.4".to_string(),
+            "192.168.1.5".to_string(),
+            "192.168.1.6".to_string(),
+        ]
+    );
+    assert_eq!(
+        hostname_updates,
+        vec![
+            ("192.168.1.1".to_string(), "host-192.168.1.1".to_string()),
+            ("192.168.1.2".to_string(), "host-192.168.1.2".to_string()),
+            ("192.168.1.3".to_string(), "host-192.168.1.3".to_string()),
+            ("192.168.1.4".to_string(), "host-192.168.1.4".to_string()),
+            ("192.168.1.5".to_string(), "host-192.168.1.5".to_string()),
+            ("192.168.1.6".to_string(), "host-192.168.1.6".to_string()),
+        ]
     );
 }
 

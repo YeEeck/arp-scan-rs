@@ -1,7 +1,7 @@
 use std::io;
 use std::panic::{self, AssertUnwindSafe};
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
-use std::sync::mpsc::{self, Receiver, SyncSender, TrySendError};
+use std::sync::mpsc::{self, Receiver, Sender};
 use std::sync::{Arc, Mutex, OnceLock};
 use std::thread;
 use std::thread::JoinHandle;
@@ -307,27 +307,34 @@ struct HostnameJob {
 }
 
 struct HostnameExecutor {
-    job_tx: SyncSender<HostnameJob>,
+    job_tx: Sender<HostnameJob>,
 }
 
 impl HostnameExecutor {
     fn submit(&self, job: HostnameJob) {
-        match self.job_tx.try_send(job) {
-            Ok(()) | Err(TrySendError::Full(_)) | Err(TrySendError::Disconnected(_)) => {}
-        }
+        let _ = self.job_tx.send(job);
     }
 }
 
 fn hostname_executor() -> &'static HostnameExecutor {
     static HOSTNAME_EXECUTOR: OnceLock<HostnameExecutor> = OnceLock::new();
     HOSTNAME_EXECUTOR.get_or_init(|| {
-        let (job_tx, job_rx) = mpsc::sync_channel(HOSTNAME_QUEUE_CAPACITY);
-        let job_rx = Arc::new(Mutex::new(job_rx));
+        let (submit_tx, submit_rx) = mpsc::channel();
+        let (worker_tx, worker_rx) = mpsc::sync_channel(HOSTNAME_QUEUE_CAPACITY);
+        let worker_rx = Arc::new(Mutex::new(worker_rx));
+
+        thread::spawn(move || {
+            while let Ok(job) = submit_rx.recv() {
+                if worker_tx.send(job).is_err() {
+                    break;
+                }
+            }
+        });
 
         for _ in 0..HOSTNAME_WORKER_COUNT {
-            let job_rx = Arc::clone(&job_rx);
+            let worker_rx = Arc::clone(&worker_rx);
             thread::spawn(move || {
-                while let Some(job) = recv_hostname_job(&job_rx) {
+                while let Some(job) = recv_hostname_job(&worker_rx) {
                     if job.cancel_flag.load(Ordering::Relaxed) {
                         continue;
                     }
@@ -352,7 +359,7 @@ fn hostname_executor() -> &'static HostnameExecutor {
             });
         }
 
-        HostnameExecutor { job_tx }
+        HostnameExecutor { job_tx: submit_tx }
     })
 }
 
