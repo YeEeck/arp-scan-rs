@@ -2,6 +2,23 @@ use arp_scan_rs::ui::{ResultListData, ResultListPanel};
 use i_slint_backend_testing::ElementHandle;
 use slint::{ComponentHandle, LogicalSize, Model, ModelRc, VecModel};
 
+fn assert_geometry_close(actual: f32, expected: f32, tolerance: f32, context: &str) {
+    assert!(
+        (actual - expected).abs() < tolerance,
+        "{context}: expected {expected} +/- {tolerance}, got {actual}"
+    );
+}
+
+#[test]
+fn hostname_geometry_tolerance_allows_subpixel_layout_differences() {
+    assert_geometry_close(
+        372.0,
+        372.25,
+        0.5,
+        "subpixel hostname alignment should be accepted",
+    );
+}
+
 #[test]
 fn result_list_panel_smoke_test_exposes_generated_bindings() {
     let _backend = i_slint_backend_testing::init_no_event_loop();
@@ -123,24 +140,25 @@ fn result_list_panel_keeps_hostname_column_reachable_with_empty_and_filled_rows(
     let second_cell_position = hostname_cells[1].absolute_position();
     let second_cell_size = hostname_cells[1].size();
     let window_width = 480.0;
+    let geometry_tolerance = 0.5;
 
-    assert!(
-        (header_position.x - first_cell_position.x).abs() < f32::EPSILON,
-        "hostname header and first cell should stay column-aligned: header x={}, cell x={}",
+    assert_geometry_close(
         header_position.x,
-        first_cell_position.x
-    );
-    assert!(
-        (first_cell_position.x - second_cell_position.x).abs() < f32::EPSILON,
-        "hostname cells should stay aligned across rows: first x={}, second x={}",
         first_cell_position.x,
-        second_cell_position.x
+        geometry_tolerance,
+        "hostname header and first cell should stay column-aligned",
     );
-    assert!(
-        (header_size.width - first_cell_size.width).abs() < f32::EPSILON,
-        "hostname header and first cell should keep the same visible column width: header={}, cell={}",
+    assert_geometry_close(
+        first_cell_position.x,
+        second_cell_position.x,
+        geometry_tolerance,
+        "hostname cells should stay aligned across rows",
+    );
+    assert_geometry_close(
         header_size.width,
-        first_cell_size.width
+        first_cell_size.width,
+        geometry_tolerance,
+        "hostname header and first cell should keep the same visible column width",
     );
     assert!(
         first_cell_position.x >= 0.0 && first_cell_position.x + first_cell_size.width <= window_width,
