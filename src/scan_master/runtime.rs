@@ -1,7 +1,8 @@
+use std::collections::VecDeque;
 use std::io;
 use std::panic::{self, AssertUnwindSafe};
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
-use std::sync::mpsc::{self, Receiver, Sender};
+use std::sync::mpsc::{self, Receiver, SyncSender, TrySendError};
 use std::sync::{Arc, Mutex, OnceLock};
 use std::thread;
 use std::thread::JoinHandle;
@@ -183,6 +184,7 @@ fn run_scan_loop<P>(
     let mut in_flight = 0usize;
     let mut dispatch_exhausted = false;
     let mut pending_failure: Option<String> = None;
+    let mut pending_hostname_jobs = VecDeque::new();
     let mut dispatch_tx = Some(result_tx);
     let hostname_executor = hostname_executor();
 
@@ -250,13 +252,17 @@ fn run_scan_loop<P>(
                             ip: ip.clone(),
                             mac: formatted_mac,
                         });
-                        hostname_executor.submit(HostnameJob {
+                        let hostname_job = HostnameJob {
                             task_id,
                             ip,
                             hostname_resolver: Arc::clone(&hostname_resolver),
                             cancel_flag: Arc::clone(&cancel_flag),
                             event_tx: event_tx.clone(),
-                        });
+                        };
+                        if let Err(job) = hostname_executor.try_submit(hostname_job) {
+                            pending_hostname_jobs.push_back(job);
+                        }
+                        flush_pending_hostname_jobs(&hostname_executor, &mut pending_hostname_jobs);
                     }
                     Ok(None) => {}
                     Err(err) if err.kind() == io::ErrorKind::Unsupported => {
@@ -271,6 +277,7 @@ fn run_scan_loop<P>(
                     scanned_hosts,
                     total_hosts,
                 });
+                flush_pending_hostname_jobs(&hostname_executor, &mut pending_hostname_jobs);
             }
             ProbeResult::WorkerPanicked { ip } => {
                 pending_failure =
@@ -295,6 +302,10 @@ fn run_scan_loop<P>(
         }
     };
     let _ = event_tx.send(terminal_event);
+
+    if !cancel_flag.load(Ordering::Relaxed) && !pending_hostname_jobs.is_empty() {
+        spawn_hostname_job_forwarder(hostname_executor, pending_hostname_jobs);
+    }
 }
 
 #[derive(Clone)]
@@ -307,11 +318,18 @@ struct HostnameJob {
 }
 
 struct HostnameExecutor {
-    job_tx: Sender<HostnameJob>,
+    job_tx: SyncSender<HostnameJob>,
 }
 
 impl HostnameExecutor {
-    fn submit(&self, job: HostnameJob) {
+    fn try_submit(&self, job: HostnameJob) -> Result<(), HostnameJob> {
+        match self.job_tx.try_send(job) {
+            Ok(()) => Ok(()),
+            Err(TrySendError::Full(job)) | Err(TrySendError::Disconnected(job)) => Err(job),
+        }
+    }
+
+    fn submit_blocking(&self, job: HostnameJob) {
         let _ = self.job_tx.send(job);
     }
 }
@@ -319,22 +337,13 @@ impl HostnameExecutor {
 fn hostname_executor() -> &'static HostnameExecutor {
     static HOSTNAME_EXECUTOR: OnceLock<HostnameExecutor> = OnceLock::new();
     HOSTNAME_EXECUTOR.get_or_init(|| {
-        let (submit_tx, submit_rx) = mpsc::channel();
-        let (worker_tx, worker_rx) = mpsc::sync_channel(HOSTNAME_QUEUE_CAPACITY);
-        let worker_rx = Arc::new(Mutex::new(worker_rx));
-
-        thread::spawn(move || {
-            while let Ok(job) = submit_rx.recv() {
-                if worker_tx.send(job).is_err() {
-                    break;
-                }
-            }
-        });
+        let (job_tx, job_rx) = mpsc::sync_channel(HOSTNAME_QUEUE_CAPACITY);
+        let job_rx = Arc::new(Mutex::new(job_rx));
 
         for _ in 0..HOSTNAME_WORKER_COUNT {
-            let worker_rx = Arc::clone(&worker_rx);
+            let job_rx = Arc::clone(&job_rx);
             thread::spawn(move || {
-                while let Some(job) = recv_hostname_job(&worker_rx) {
+                while let Some(job) = recv_hostname_job(&job_rx) {
                     if job.cancel_flag.load(Ordering::Relaxed) {
                         continue;
                     }
@@ -359,8 +368,38 @@ fn hostname_executor() -> &'static HostnameExecutor {
             });
         }
 
-        HostnameExecutor { job_tx: submit_tx }
+        HostnameExecutor { job_tx }
     })
+}
+
+fn flush_pending_hostname_jobs(
+    hostname_executor: &HostnameExecutor,
+    pending_jobs: &mut VecDeque<HostnameJob>,
+) {
+    while let Some(job) = pending_jobs.pop_front() {
+        match hostname_executor.try_submit(job) {
+            Ok(()) => {}
+            Err(job) => {
+                pending_jobs.push_front(job);
+                break;
+            }
+        }
+    }
+}
+
+fn spawn_hostname_job_forwarder(
+    hostname_executor: &'static HostnameExecutor,
+    pending_jobs: VecDeque<HostnameJob>,
+) {
+    thread::spawn(move || {
+        for job in pending_jobs {
+            if job.cancel_flag.load(Ordering::Relaxed) {
+                continue;
+            }
+
+            hostname_executor.submit_blocking(job);
+        }
+    });
 }
 
 fn recv_hostname_job(job_rx: &Arc<Mutex<mpsc::Receiver<HostnameJob>>>) -> Option<HostnameJob> {
