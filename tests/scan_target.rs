@@ -1,7 +1,8 @@
+use arp_scan_rs::network_interface::{NetworkInterfaceAvailability, NetworkInterfaceIpv4};
 use arp_scan_rs::scan_target::{
+    InputMode, ScanTargetInput, UiInputState, apply_interface_to_input_state,
     convert_cidr_to_ip_and_mask, convert_ip_and_mask_to_cidr, normalize_scan_target,
-    prepare_scan_target, prepare_scan_target_from_ui_fields, InputMode, ScanTargetInput,
-    UiInputState,
+    prepare_scan_target, prepare_scan_target_from_ui_fields,
 };
 
 #[test]
@@ -153,4 +154,71 @@ fn prepare_scan_target_from_ui_fields_rejects_unknown_mode() {
             .to_string(),
         "Invalid input mode"
     );
+}
+
+#[test]
+fn usable_interface_updates_ip_and_mask_when_mode_is_ip_and_mask() {
+    let state = UiInputState {
+        mode: InputMode::IpAndMask,
+        cidr_text: "10.0.0.0/8".into(),
+        ip_text: "10.0.0.8".into(),
+        mask_text: "255.0.0.0".into(),
+    };
+
+    let updated = apply_interface_to_input_state(
+        &state,
+        &NetworkInterfaceAvailability::Available(NetworkInterfaceIpv4 {
+            ip: "192.168.1.23".into(),
+            mask: "255.255.255.0".into(),
+            cidr: "192.168.1.0/24".into(),
+        }),
+    );
+
+    assert_eq!(updated.mode, InputMode::IpAndMask);
+    assert_eq!(updated.ip_text, "192.168.1.23");
+    assert_eq!(updated.mask_text, "255.255.255.0");
+    assert_eq!(updated.cidr_text, "10.0.0.0/8");
+}
+
+#[test]
+fn usable_interface_updates_cidr_when_mode_is_cidr() {
+    let state = UiInputState {
+        mode: InputMode::Cidr,
+        cidr_text: "10.0.0.0/8".into(),
+        ip_text: "10.0.0.8".into(),
+        mask_text: "255.0.0.0".into(),
+    };
+
+    let updated = apply_interface_to_input_state(
+        &state,
+        &NetworkInterfaceAvailability::Available(NetworkInterfaceIpv4 {
+            ip: "192.168.1.23".into(),
+            mask: "255.255.255.0".into(),
+            cidr: "192.168.1.0/24".into(),
+        }),
+    );
+
+    assert_eq!(updated.mode, InputMode::Cidr);
+    assert_eq!(updated.cidr_text, "192.168.1.0/24");
+    assert_eq!(updated.ip_text, "10.0.0.8");
+    assert_eq!(updated.mask_text, "255.0.0.0");
+}
+
+#[test]
+fn unavailable_interface_keeps_existing_values_unchanged() {
+    let state = UiInputState {
+        mode: InputMode::IpAndMask,
+        cidr_text: "10.0.0.0/8".into(),
+        ip_text: "10.0.0.8".into(),
+        mask_text: "255.0.0.0".into(),
+    };
+
+    let updated = apply_interface_to_input_state(
+        &state,
+        &NetworkInterfaceAvailability::Unavailable {
+            reason: "No IPv4 address".into(),
+        },
+    );
+
+    assert_eq!(updated, state);
 }

@@ -1,6 +1,8 @@
 use std::fmt;
 use std::net::Ipv4Addr;
 
+use crate::network_interface::NetworkInterfaceAvailability;
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum InputMode {
     Cidr,
@@ -90,6 +92,26 @@ pub fn prepare_scan_target_from_ui_fields(
         ip_text: ip_text.to_string(),
         mask_text: mask_text.to_string(),
     })
+}
+
+pub fn apply_interface_to_input_state(
+    state: &UiInputState,
+    availability: &NetworkInterfaceAvailability,
+) -> UiInputState {
+    let mut next = state.clone();
+
+    match (state.mode, availability) {
+        (InputMode::Cidr, NetworkInterfaceAvailability::Available(ipv4)) => {
+            next.cidr_text = ipv4.cidr.clone();
+        }
+        (InputMode::IpAndMask, NetworkInterfaceAvailability::Available(ipv4)) => {
+            next.ip_text = ipv4.ip.clone();
+            next.mask_text = ipv4.mask.clone();
+        }
+        (_, NetworkInterfaceAvailability::Unavailable { .. }) => {}
+    }
+
+    next
 }
 
 pub fn convert_cidr_to_ip_and_mask(cidr_text: &str) -> Result<(String, String), ScanTargetError> {
