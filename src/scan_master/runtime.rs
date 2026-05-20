@@ -57,7 +57,7 @@ pub enum ScanEvent {
 }
 
 static NEXT_TASK_ID: AtomicU64 = AtomicU64::new(1);
-const HOSTNAME_WORKER_COUNT: usize = 2;
+const HOSTNAME_WORKER_COUNT: usize = 16;
 
 pub fn next_task_id() -> u64 {
     NEXT_TASK_ID.fetch_add(1, Ordering::Relaxed)

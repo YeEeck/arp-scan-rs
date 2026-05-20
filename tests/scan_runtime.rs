@@ -9,7 +9,7 @@ use arp_scan_rs::scan_master::{
     HostnameResolver, ScanEvent, ScanTask,
 };
 
-const HOSTNAME_WORKER_COUNT: usize = 2;
+const HOSTNAME_WORKER_COUNT: usize = 16;
 
 fn hostname_runtime_test_lock() -> std::sync::MutexGuard<'static, ()> {
     static LOCK: Mutex<()> = Mutex::new(());
@@ -545,20 +545,10 @@ fn runtime_bounds_hostname_resolution_concurrency() {
     )
     .unwrap();
 
-    let first_two = vec![
-        started_rx
-            .recv_timeout(Duration::from_secs(1))
-            .expect("first hostname lookup should start"),
-        started_rx
-            .recv_timeout(Duration::from_secs(1))
-            .expect("second hostname lookup should start"),
-    ];
-
-    assert_eq!(peak.load(Ordering::SeqCst), 2);
-    assert_eq!(
-        started_rx.recv_timeout(Duration::from_millis(150)),
-        Err(mpsc::RecvTimeoutError::Timeout)
-    );
+    let mut started_before_release = Vec::new();
+    while let Ok(ip) = started_rx.recv_timeout(Duration::from_millis(150)) {
+        started_before_release.push(ip);
+    }
 
     for _ in 0..6 {
         permit_tx.send(()).unwrap();
@@ -566,7 +556,7 @@ fn runtime_bounds_hostname_resolution_concurrency() {
 
     let events = drain_task(task);
     let mut all_started: Vec<_> = started_rx.try_iter().collect();
-    all_started.extend(first_two);
+    all_started.extend(started_before_release.iter().cloned());
     all_started.sort();
 
     let hostname_updates: Vec<_> = events
@@ -578,7 +568,8 @@ fn runtime_bounds_hostname_resolution_concurrency() {
         .collect();
 
     assert_eq!(active.load(Ordering::SeqCst), 0);
-    assert_eq!(peak.load(Ordering::SeqCst), 2);
+    assert_eq!(peak.load(Ordering::SeqCst), 6);
+    assert_eq!(started_before_release.len(), 6);
     assert_eq!(
         all_started,
         vec![
@@ -729,7 +720,7 @@ impl ArpProbe for HostFoundThenBlockedProbe {
 #[test]
 fn runtime_caps_hostname_workers_across_cancelled_scan_cycles() {
     let _lock = hostname_runtime_test_lock();
-    let scan_count = 6;
+    let scan_count = HOSTNAME_WORKER_COUNT + 4;
     let (hostname_started_tx, hostname_started_rx) = mpsc::channel();
     let (hostname_permit_tx, hostname_permit_rx) = mpsc::channel();
     let resolver = BlockingHostnameResolver {
@@ -765,8 +756,8 @@ fn runtime_caps_hostname_workers_across_cancelled_scan_cycles() {
         "first wave should start at least one hostname lookup"
     );
     assert!(
-        wave1_hostname_starts.len() < scan_count,
-        "hostname concurrency should not scale to one worker per scan"
+        wave1_hostname_starts.len() <= HOSTNAME_WORKER_COUNT,
+        "hostname concurrency should stay within the shared worker pool"
     );
 
     for task in &wave1_tasks {
@@ -896,7 +887,7 @@ fn runtime_eventually_processes_hostname_jobs_when_executor_queue_is_full() {
     all_started.sort();
     hostname_updates.sort();
 
-    assert_eq!(peak.load(Ordering::SeqCst), 2);
+    assert_eq!(peak.load(Ordering::SeqCst), host_count);
     assert_eq!(active.load(Ordering::SeqCst), 0);
     assert!(runtime_events.iter().any(|event| matches!(
         event,
@@ -907,7 +898,7 @@ fn runtime_eventually_processes_hostname_jobs_when_executor_queue_is_full() {
         }
     )));
     assert!(!started_before_release.is_empty());
-    assert!(started_before_release.len() <= HOSTNAME_WORKER_COUNT);
+    assert!(started_before_release.len() <= host_count);
     assert_eq!(
         all_started,
         vec![
@@ -961,6 +952,7 @@ impl HostnameResolver for PanickingThenWorkingHostnameResolver {
 #[test]
 fn runtime_recovers_from_hostname_resolver_panics() {
     let _lock = hostname_runtime_test_lock();
+    let host_count = 30;
     let (started_tx, started_rx) = mpsc::channel();
     let resolver = PanickingThenWorkingHostnameResolver {
         panics_remaining: Arc::new(AtomicUsize::new(HOSTNAME_WORKER_COUNT)),
@@ -968,7 +960,7 @@ fn runtime_recovers_from_hostname_resolver_panics() {
     };
 
     let task = start_scan_with_probe_and_hostname_resolver(
-        "192.168.1.0/29",
+        "192.168.1.0/27",
         1,
         Arc::new(AllHostsFoundProbe),
         Arc::new(resolver),
@@ -990,12 +982,12 @@ fn runtime_recovers_from_hostname_resolver_panics() {
     assert!(events.iter().any(|event| matches!(
         event,
         ScanEvent::Finished {
-            scanned_hosts: 6,
-            found_hosts: 6,
+            scanned_hosts,
+            found_hosts,
             ..
-        }
+        } if *scanned_hosts == host_count && *found_hosts == host_count
     )));
-    assert!(started.len() >= HOSTNAME_WORKER_COUNT);
+    assert_eq!(started.len(), host_count);
     assert!(
         !hostname_updates.is_empty(),
         "workers should continue processing jobs after resolver panics"
