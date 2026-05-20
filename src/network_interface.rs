@@ -162,7 +162,8 @@ fn first_ipv4_address_and_mask(
         }
 
         let sockaddr_in = unsafe { &*(socket_address.lpSockaddr as *const SOCKADDR_IN) };
-        let ip = Ipv4Addr::from(u32::from_be(sockaddr_in.sin_addr.S_un.S_addr));
+        let raw_ip = unsafe { sockaddr_in.sin_addr.S_un.S_addr };
+        let ip = Ipv4Addr::from(u32::from_be(raw_ip));
         let prefix = unicast.OnLinkPrefixLength;
 
         if prefix > 32 {
