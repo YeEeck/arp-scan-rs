@@ -1,4 +1,5 @@
 use arp_scan_rs::ui::{ResultListData, ResultListPanel};
+use i_slint_backend_testing::ElementHandle;
 use slint::{Model, ModelRc, VecModel};
 
 #[test]
@@ -35,4 +36,35 @@ fn result_list_panel_smoke_test_exposes_generated_bindings() {
     assert_eq!(rows.row_data(1).unwrap().mac, "AA:AA:AA:AA:AA:14");
     assert_eq!(rows.row_data(1).unwrap().hostname, "");
     assert!(rows.row_data(2).is_none());
+}
+
+#[test]
+fn result_list_panel_renders_hostname_text_in_hostname_column() {
+    let _backend = i_slint_backend_testing::init_no_event_loop();
+
+    let panel = ResultListPanel::new().unwrap();
+    let rows = VecModel::from(vec![ResultListData {
+        ip: "192.168.1.2".into(),
+        mac: "AA:AA:AA:AA:AA:02".into(),
+        hostname: "printer.local".into(),
+    }]);
+
+    panel.set_rows(ModelRc::from(std::rc::Rc::new(rows)));
+
+    let hostname_header = ElementHandle::find_by_element_id(
+        &panel,
+        "ResultListPanel::hostname-column-header",
+    )
+    .next()
+    .expect("hostname column header should be present");
+    assert_eq!(hostname_header.accessible_value().as_deref(), Some("Hostname"));
+
+    let hostname_cell =
+        ElementHandle::find_by_element_id(&panel, "ResultListPanel::hostname-cell-text")
+            .next()
+            .expect("hostname cell text should be present");
+    assert_eq!(
+        hostname_cell.accessible_value().as_deref(),
+        Some("printer.local")
+    );
 }
