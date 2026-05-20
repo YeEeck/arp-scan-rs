@@ -4,14 +4,15 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 use std::thread;
 
-use arp_scan_rs::network_interface::{format_interface_label, load_network_interfaces};
+use arp_scan_rs::network_interface::{
+    format_interface_label, is_interface_usable, load_network_interfaces, resolve_selected_interface,
+};
 use arp_scan_rs::scan_master::{start_scan, ScanEvent, ScanTask};
 use arp_scan_rs::scan_target::{
     InputMode, UiInputState, apply_interface_to_input_state, prepare_scan_target_from_ui_fields,
 };
 use arp_scan_rs::ui::{MainWindow, NetworkInterfaceItem, ResultListData};
 use arp_scan_rs::ui_state::{RowMutation, ScanUiState, ViewState};
-use slint::SharedString;
 use slint::{ComponentHandle, Model, ModelRc, VecModel};
 
 const MAX_IN_FLIGHT: usize = 256;
@@ -25,14 +26,14 @@ struct ActiveScan {
 fn main() {
     let window = MainWindow::new().unwrap();
     let interfaces = load_network_interfaces().unwrap_or_else(|_| Vec::new());
-    let interface_labels = std::iter::once("Select network interface".to_string())
-        .chain(interfaces.iter().map(format_interface_label))
-        .collect::<Vec<_>>();
-    let interface_items = interface_labels
-        .iter()
-        .map(|label| NetworkInterfaceItem {
-            label: label.clone().into(),
-        })
+    let interface_items = std::iter::once(NetworkInterfaceItem {
+        label: "Select network interface".into(),
+        enabled: true,
+    })
+    .chain(interfaces.iter().map(|item| NetworkInterfaceItem {
+        label: format_interface_label(item).into(),
+        enabled: is_interface_usable(item),
+    }))
         .collect::<Vec<_>>();
 
     window.set_input_mode(0);
@@ -41,12 +42,6 @@ fn main() {
     window.set_cidr_text("192.168.1.0/24".into());
     window.set_network_interface_model(ModelRc::from(std::rc::Rc::new(VecModel::from(
         interface_items,
-    ))));
-    window.set_network_interface_labels(ModelRc::from(std::rc::Rc::new(VecModel::from(
-        interface_labels
-            .iter()
-            .map(|label| SharedString::from(label.as_str()))
-            .collect::<Vec<_>>(),
     ))));
     window.set_selected_network_interface_index(0);
 
@@ -129,11 +124,7 @@ fn main() {
     let interfaces_for_selection = Arc::new(interfaces);
     let weak_window_for_interface = window.as_weak();
     window.on_network_interface_changed(move |index| {
-        if index <= 0 {
-            return;
-        }
-
-        let Some(interface) = interfaces_for_selection.get((index - 1) as usize) else {
+        let Some(interface) = resolve_selected_interface(interfaces_for_selection.as_ref(), index) else {
             return;
         };
         let Some(window) = weak_window_for_interface.upgrade() else {

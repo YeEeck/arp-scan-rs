@@ -21,12 +21,15 @@ fn main_window_smoke_test_exposes_interface_bindings_and_defaults() {
     let interfaces = VecModel::from(vec![
         NetworkInterfaceItem {
             label: "Select network interface".into(),
+            enabled: true,
         },
         NetworkInterfaceItem {
             label: "Ethernet".into(),
+            enabled: true,
         },
         NetworkInterfaceItem {
             label: "Loopback Pseudo-Interface (Loopback)".into(),
+            enabled: false,
         },
     ]);
 
@@ -53,11 +56,14 @@ fn main_window_smoke_test_exposes_interface_bindings_and_defaults() {
         interface_rows.row_data(0).unwrap().label,
         "Select network interface"
     );
+    assert!(interface_rows.row_data(0).unwrap().enabled);
     assert_eq!(interface_rows.row_data(1).unwrap().label, "Ethernet");
+    assert!(interface_rows.row_data(1).unwrap().enabled);
     assert_eq!(
         interface_rows.row_data(2).unwrap().label,
         "Loopback Pseudo-Interface (Loopback)"
     );
+    assert!(!interface_rows.row_data(2).unwrap().enabled);
     assert_eq!(window.get_input_mode(), 0);
     assert_eq!(window.get_cidr_text(), "192.168.1.0/24");
     assert_eq!(window.get_ip_text(), "192.168.1.23");

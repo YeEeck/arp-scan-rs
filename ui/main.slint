@@ -1,4 +1,4 @@
-import { Button, ComboBox, GroupBox, LineEdit, ListView } from "std-widgets.slint";
+import { Button, ComboBox, GroupBox, LineEdit, ListView, ScrollView } from "std-widgets.slint";
 
 export struct ResultListData {
     ip: string,
@@ -8,6 +8,99 @@ export struct ResultListData {
 
 export struct NetworkInterfaceItem {
     label: string,
+    enabled: bool,
+}
+
+component NetworkInterfaceSelector inherits Rectangle {
+    in property <[NetworkInterfaceItem]> model;
+    in-out property <int> current-index: 0;
+    in property <bool> enabled: true;
+    in property <length> control-height: 42px;
+    callback selected(index: int);
+
+    private property <string> current-label: root.current-index >= 0 && root.current-index < root.model.length ? root.model[root.current-index].label : "Select network interface";
+
+    min-height: root.control-height;
+    horizontal-stretch: 1;
+
+    changed current-index => {
+        if root.current-index < 0 || root.current-index >= root.model.length
+            || !root.model[root.current-index].enabled {
+            root.current-index = 0;
+        }
+    }
+
+    changed model => {
+        if root.current-index < 0 || root.current-index >= root.model.length
+            || !root.model[root.current-index].enabled {
+            root.current-index = 0;
+        }
+    }
+
+    Button {
+        width: parent.width;
+        height: parent.height;
+        text: root.current-label;
+        enabled: root.enabled;
+
+        clicked => {
+            popup.show();
+        }
+    }
+
+    popup := PopupWindow {
+        x: 0;
+        y: root.height;
+        width: root.width;
+        height: 220px;
+        close-policy: PopupClosePolicy.close-on-click-outside;
+
+        Rectangle {
+            width: parent.width;
+            height: parent.height;
+            border-radius: 8px;
+            border-width: 1px;
+            border-color: #c4ccd7;
+            background: #ffffff;
+
+            ScrollView {
+                width: parent.width;
+                height: parent.height;
+
+                VerticalLayout {
+                    spacing: 0px;
+
+                    for item[index] in root.model: Rectangle {
+                        min-height: 36px;
+                        horizontal-stretch: 1;
+                        background: index == root.current-index ? #e7edf5 : (item.enabled ? #ffffff : #f3f5f8);
+                        opacity: item.enabled ? 1 : 0.5;
+
+                        Text {
+                            x: 12px;
+                            width: parent.width - self.x;
+                            height: 100%;
+                            text: item.label;
+                            color: item.enabled ? #1f2933 : #7b8794;
+                            font-size: 15px;
+                            vertical-alignment: center;
+                            overflow: elide;
+                        }
+
+                        TouchArea {
+                            enabled: item.enabled && root.enabled;
+
+                            clicked => {
+                                root.current-index = index;
+                                root.selected(index);
+                                popup.close();
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
 }
 
 component ResultListPanel inherits Rectangle {
@@ -218,7 +311,6 @@ component MainWindow inherits Window {
     private property <length> status-font-size: 15px;
     in property <[ResultListData]> result_list_data_model;
     in property <[NetworkInterfaceItem]> network_interface_model;
-    in property <[string]> network_interface_labels;
     in-out property <int> selected_network_interface_index: 0;
     in-out property <int> input_mode: 0;
     in-out property <string> cidr_text;
@@ -233,6 +325,14 @@ component MainWindow inherits Window {
     callback do_cancel();
     callback network_interface_changed(index: int);
 
+    changed selected_network_interface_index => {
+        if root.selected_network_interface_index < 0
+            || root.selected_network_interface_index >= root.network_interface_model.length
+            || !root.network_interface_model[root.selected_network_interface_index].enabled {
+            root.selected_network_interface_index = 0;
+        }
+    }
+
     VerticalLayout {
         padding: root.page-padding;
         spacing: root.section-spacing;
@@ -244,14 +344,15 @@ component MainWindow inherits Window {
             VerticalLayout {
                 spacing: root.control-row-spacing;
 
-                ComboBox {
+                NetworkInterfaceSelector {
                     min-height: root.control-min-height;
-                    model: root.network_interface_labels;
+                    model: root.network_interface_model;
                     current-index <=> root.selected_network_interface_index;
                     enabled: root.scan_enabled;
+                    control-height: root.control-min-height;
 
-                    changed current-index => {
-                        root.network_interface_changed(self.current-index);
+                    selected(index) => {
+                        root.network_interface_changed(index);
                     }
                 }
 

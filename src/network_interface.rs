@@ -29,6 +29,26 @@ pub fn format_interface_label(item: &NetworkInterface) -> String {
     }
 }
 
+pub fn is_interface_usable(item: &NetworkInterface) -> bool {
+    matches!(item.availability, NetworkInterfaceAvailability::Available(_))
+}
+
+pub fn resolve_selected_interface(
+    interfaces: &[NetworkInterface],
+    index: i32,
+) -> Option<&NetworkInterface> {
+    if index <= 0 {
+        return None;
+    }
+
+    let interface = interfaces.get((index - 1) as usize)?;
+    if is_interface_usable(interface) {
+        Some(interface)
+    } else {
+        None
+    }
+}
+
 pub fn load_network_interfaces() -> io::Result<Vec<NetworkInterface>> {
     #[cfg(target_os = "windows")]
     {
