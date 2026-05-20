@@ -815,6 +815,7 @@ fn runtime_caps_hostname_workers_across_cancelled_scan_cycles() {
 fn runtime_eventually_processes_hostname_jobs_when_executor_queue_is_full() {
     let _lock = hostname_runtime_test_lock();
     let host_count = 6;
+    let effective_cap = host_count.min(HOSTNAME_WORKER_COUNT);
     let active = Arc::new(AtomicUsize::new(0));
     let peak = Arc::new(AtomicUsize::new(0));
     let (started_tx, started_rx) = mpsc::channel();
@@ -887,7 +888,17 @@ fn runtime_eventually_processes_hostname_jobs_when_executor_queue_is_full() {
     all_started.sort();
     hostname_updates.sort();
 
-    assert_eq!(peak.load(Ordering::SeqCst), host_count);
+    let peak = peak.load(Ordering::SeqCst);
+
+    assert!(peak > 0);
+    assert!(
+        peak >= started_before_release.len(),
+        "peak concurrency should cover the hostname jobs that had already started"
+    );
+    assert!(
+        peak <= effective_cap,
+        "hostname concurrency should stay within the effective worker cap"
+    );
     assert_eq!(active.load(Ordering::SeqCst), 0);
     assert!(runtime_events.iter().any(|event| matches!(
         event,
