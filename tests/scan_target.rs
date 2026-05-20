@@ -65,6 +65,40 @@ fn ip_and_mask_convert_to_cidr_for_mode_switch() {
 }
 
 #[test]
+fn successful_mode_switch_updates_ip_and_mask_fields() {
+    let state = UiInputState {
+        mode: InputMode::Cidr,
+        cidr_text: "192.168.1.0/24".into(),
+        ip_text: "10.0.0.8".into(),
+        mask_text: "255.255.0.0".into(),
+    };
+
+    let switched = state.switch_mode(InputMode::IpAndMask);
+
+    assert_eq!(switched.mode, InputMode::IpAndMask);
+    assert_eq!(switched.cidr_text, "192.168.1.0/24");
+    assert_eq!(switched.ip_text, "192.168.1.0");
+    assert_eq!(switched.mask_text, "255.255.255.0");
+}
+
+#[test]
+fn successful_mode_switch_updates_cidr_field() {
+    let state = UiInputState {
+        mode: InputMode::IpAndMask,
+        cidr_text: "10.0.0.0/8".into(),
+        ip_text: "192.168.1.23".into(),
+        mask_text: "255.255.255.128".into(),
+    };
+
+    let switched = state.switch_mode(InputMode::Cidr);
+
+    assert_eq!(switched.mode, InputMode::Cidr);
+    assert_eq!(switched.cidr_text, "192.168.1.0/25");
+    assert_eq!(switched.ip_text, "192.168.1.23");
+    assert_eq!(switched.mask_text, "255.255.255.128");
+}
+
+#[test]
 fn invalid_mode_switch_keeps_last_known_destination_values() {
     let state = UiInputState {
         mode: InputMode::Cidr,
