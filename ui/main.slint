@@ -1,4 +1,4 @@
-import { Button, GroupBox, LineEdit, ListView } from "std-widgets.slint";
+import { Button, ComboBox, GroupBox, LineEdit, ListView } from "std-widgets.slint";
 
 export struct ResultListData {
     ip: string,
@@ -213,7 +213,10 @@ component MainWindow inherits Window {
     private property <length> control-font-size: 15px;
     private property <length> status-font-size: 15px;
     in property <[ResultListData]> result_list_data_model;
-    in-out property <string> cidr;
+    in-out property <int> input_mode: 0;
+    in-out property <string> cidr_text;
+    in-out property <string> ip_text: "192.168.1.23";
+    in-out property <string> mask_text: "255.255.255.0";
     in property <string> status_text;
     in property <string> progress_text;
     in property <bool> scan_enabled;
@@ -227,15 +230,46 @@ component MainWindow inherits Window {
         spacing: root.section-spacing;
 
         GroupBox {
-            title: "CIDR";
+            title: "Scan Target";
             vertical-stretch: 0;
 
-            LineEdit {
-                min-height: root.control-min-height;
-                placeholder-text: "192.168.1.0/24";
-                text <=> root.cidr;
-                enabled: root.scan_enabled;
-                font-size: root.control_font_size;
+            VerticalLayout {
+                spacing: root.control-row-spacing;
+
+                ComboBox {
+                    min-height: root.control-min-height;
+                    current-index <=> root.input_mode;
+                    model: ["IP + Subnet Mask", "CIDR"];
+                    enabled: root.scan_enabled;
+                }
+
+                if root.input_mode == 0: HorizontalLayout {
+                    spacing: root.control-row-spacing;
+
+                    LineEdit {
+                        min-height: root.control-min-height;
+                        placeholder-text: "192.168.1.23";
+                        text <=> root.ip_text;
+                        enabled: root.scan_enabled;
+                        font-size: root.control_font_size;
+                    }
+
+                    LineEdit {
+                        min-height: root.control-min-height;
+                        placeholder-text: "255.255.255.0";
+                        text <=> root.mask_text;
+                        enabled: root.scan_enabled;
+                        font-size: root.control_font_size;
+                    }
+                }
+
+                if root.input_mode == 1: LineEdit {
+                    min-height: root.control-min-height;
+                    placeholder-text: "192.168.1.0/24";
+                    text <=> root.cidr_text;
+                    enabled: root.scan_enabled;
+                    font-size: root.control_font_size;
+                }
             }
         }
 

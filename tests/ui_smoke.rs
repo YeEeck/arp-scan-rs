@@ -20,13 +20,19 @@ fn main_window_smoke_test_exposes_generated_bindings() {
     ]);
 
     window.set_result_list_data_model(ModelRc::from(std::rc::Rc::new(rows)));
-    window.set_cidr("192.168.1.0/24".into());
+    window.set_input_mode(0);
+    window.set_cidr_text("192.168.1.0/24".into());
+    window.set_ip_text("192.168.1.23".into());
+    window.set_mask_text("255.255.255.0".into());
     window.set_status_text("Scanning".into());
     window.set_progress_text("2 / 254".into());
     window.set_scan_enabled(false);
     window.set_cancel_enabled(true);
 
-    assert_eq!(window.get_cidr(), "192.168.1.0/24");
+    assert_eq!(window.get_input_mode(), 0);
+    assert_eq!(window.get_cidr_text(), "192.168.1.0/24");
+    assert_eq!(window.get_ip_text(), "192.168.1.23");
+    assert_eq!(window.get_mask_text(), "255.255.255.0");
     assert_eq!(window.get_status_text(), "Scanning");
     assert_eq!(window.get_progress_text(), "2 / 254");
     assert!(!window.get_scan_enabled());
