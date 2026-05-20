@@ -16,6 +16,43 @@ pub struct ScanTargetInput {
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
+pub struct UiInputState {
+    pub mode: InputMode,
+    pub cidr_text: String,
+    pub ip_text: String,
+    pub mask_text: String,
+}
+
+impl UiInputState {
+    pub fn switch_mode(&self, next_mode: InputMode) -> Self {
+        if self.mode == next_mode {
+            return self.clone();
+        }
+
+        let mut next = self.clone();
+        next.mode = next_mode;
+
+        match (self.mode, next_mode) {
+            (InputMode::Cidr, InputMode::IpAndMask) => {
+                if let Ok((ip_text, mask_text)) = convert_cidr_to_ip_and_mask(&self.cidr_text) {
+                    next.ip_text = ip_text;
+                    next.mask_text = mask_text;
+                }
+            }
+            (InputMode::IpAndMask, InputMode::Cidr) => {
+                if let Ok(cidr_text) = convert_ip_and_mask_to_cidr(&self.ip_text, &self.mask_text)
+                {
+                    next.cidr_text = cidr_text;
+                }
+            }
+            _ => {}
+        }
+
+        next
+    }
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub struct ScanTargetError(&'static str);
 
 impl fmt::Display for ScanTargetError {
@@ -31,6 +68,28 @@ pub fn normalize_scan_target(input: &ScanTargetInput) -> Result<String, ScanTarg
         InputMode::Cidr => normalize_cidr(&input.cidr_text),
         InputMode::IpAndMask => normalize_ip_and_mask(&input.ip_text, &input.mask_text),
     }
+}
+
+pub fn convert_cidr_to_ip_and_mask(cidr_text: &str) -> Result<(String, String), ScanTargetError> {
+    let cidr = normalize_cidr(cidr_text)?;
+    let (ip_text, prefix_text) = cidr
+        .split_once('/')
+        .ok_or(ScanTargetError("Invalid CIDR"))?;
+    let prefix: u8 = prefix_text
+        .parse()
+        .map_err(|_| ScanTargetError("Invalid CIDR"))?;
+
+    Ok((
+        ip_text.to_string(),
+        Ipv4Addr::from(prefix_to_mask(prefix)).to_string(),
+    ))
+}
+
+pub fn convert_ip_and_mask_to_cidr(
+    ip_text: &str,
+    mask_text: &str,
+) -> Result<String, ScanTargetError> {
+    normalize_ip_and_mask(ip_text, mask_text)
 }
 
 fn normalize_cidr(cidr_text: &str) -> Result<String, ScanTargetError> {
