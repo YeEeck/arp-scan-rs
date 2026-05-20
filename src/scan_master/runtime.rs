@@ -1,7 +1,7 @@
 use std::io;
 use std::panic::{self, AssertUnwindSafe};
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
-use std::sync::mpsc::{self, Receiver};
+use std::sync::mpsc::{self, Receiver, SyncSender, TrySendError};
 use std::sync::{Arc, Mutex, OnceLock};
 use std::thread;
 use std::thread::JoinHandle;
@@ -57,6 +57,7 @@ pub enum ScanEvent {
 
 static NEXT_TASK_ID: AtomicU64 = AtomicU64::new(1);
 const HOSTNAME_WORKER_COUNT: usize = 2;
+const HOSTNAME_QUEUE_CAPACITY: usize = 2;
 
 pub fn next_task_id() -> u64 {
     NEXT_TASK_ID.fetch_add(1, Ordering::Relaxed)
@@ -306,19 +307,21 @@ struct HostnameJob {
 }
 
 struct HostnameExecutor {
-    job_tx: mpsc::Sender<HostnameJob>,
+    job_tx: SyncSender<HostnameJob>,
 }
 
 impl HostnameExecutor {
     fn submit(&self, job: HostnameJob) {
-        let _ = self.job_tx.send(job);
+        match self.job_tx.try_send(job) {
+            Ok(()) | Err(TrySendError::Full(_)) | Err(TrySendError::Disconnected(_)) => {}
+        }
     }
 }
 
 fn hostname_executor() -> &'static HostnameExecutor {
     static HOSTNAME_EXECUTOR: OnceLock<HostnameExecutor> = OnceLock::new();
     HOSTNAME_EXECUTOR.get_or_init(|| {
-        let (job_tx, job_rx) = mpsc::channel();
+        let (job_tx, job_rx) = mpsc::sync_channel(HOSTNAME_QUEUE_CAPACITY);
         let job_rx = Arc::new(Mutex::new(job_rx));
 
         for _ in 0..HOSTNAME_WORKER_COUNT {
@@ -329,7 +332,10 @@ fn hostname_executor() -> &'static HostnameExecutor {
                         continue;
                     }
 
-                    let Some(hostname) = job.hostname_resolver.resolve(&job.ip) else {
+                    let resolved = panic::catch_unwind(AssertUnwindSafe(|| {
+                        job.hostname_resolver.resolve(&job.ip)
+                    }));
+                    let Some(hostname) = resolved.ok().flatten() else {
                         continue;
                     };
 

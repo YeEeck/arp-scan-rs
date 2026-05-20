@@ -9,6 +9,14 @@ use arp_scan_rs::scan_master::{
     HostnameResolver, ScanEvent, ScanTask,
 };
 
+const HOSTNAME_WORKER_COUNT: usize = 2;
+const HOSTNAME_QUEUE_CAPACITY: usize = 2;
+
+fn hostname_runtime_test_lock() -> std::sync::MutexGuard<'static, ()> {
+    static LOCK: Mutex<()> = Mutex::new(());
+    LOCK.lock().unwrap_or_else(|poisoned| poisoned.into_inner())
+}
+
 #[derive(Clone)]
 struct ControlledProbe {
     active: Arc<AtomicUsize>,
@@ -397,6 +405,7 @@ impl HostnameResolver for BlockingHostnameResolver {
 
 #[test]
 fn runtime_streams_hostname_updates_without_waiting_for_lookup() {
+    let _lock = hostname_runtime_test_lock();
     let (started_tx, started_rx) = mpsc::channel();
     let (permit_tx, permit_rx) = mpsc::channel();
     let resolver = BlockingHostnameResolver {
@@ -517,6 +526,7 @@ impl HostnameResolver for PeakTrackingHostnameResolver {
 
 #[test]
 fn runtime_bounds_hostname_resolution_concurrency() {
+    let _lock = hostname_runtime_test_lock();
     let active = Arc::new(AtomicUsize::new(0));
     let peak = Arc::new(AtomicUsize::new(0));
     let (started_tx, started_rx) = mpsc::channel();
@@ -577,11 +587,9 @@ fn runtime_bounds_hostname_resolution_concurrency() {
             "192.168.1.2".to_string(),
             "192.168.1.3".to_string(),
             "192.168.1.4".to_string(),
-            "192.168.1.5".to_string(),
-            "192.168.1.6".to_string(),
         ]
     );
-    assert_eq!(hostname_updates.len(), 6);
+    assert_eq!(hostname_updates.len(), HOSTNAME_WORKER_COUNT + HOSTNAME_QUEUE_CAPACITY);
 }
 
 #[derive(Clone)]
@@ -612,6 +620,7 @@ impl ArpProbe for OneHostFoundThenBlockedProbe {
 
 #[test]
 fn runtime_suppresses_hostname_updates_after_cancellation() {
+    let _lock = hostname_runtime_test_lock();
     let (probe_started_tx, probe_started_rx) = mpsc::channel();
     let (probe_permit_tx, probe_permit_rx) = mpsc::channel();
     let (hostname_started_tx, hostname_started_rx) = mpsc::channel();
@@ -718,6 +727,7 @@ impl ArpProbe for HostFoundThenBlockedProbe {
 
 #[test]
 fn runtime_caps_hostname_workers_across_cancelled_scan_cycles() {
+    let _lock = hostname_runtime_test_lock();
     let scan_count = 6;
     let (hostname_started_tx, hostname_started_rx) = mpsc::channel();
     let (hostname_permit_tx, hostname_permit_rx) = mpsc::channel();
@@ -807,4 +817,133 @@ fn runtime_caps_hostname_workers_across_cancelled_scan_cycles() {
             .join()
             .expect("second-wave scan task should exit cleanly");
     }
+}
+
+#[test]
+fn runtime_drops_hostname_jobs_when_executor_queue_is_full() {
+    let _lock = hostname_runtime_test_lock();
+    let host_count = 6;
+    let active = Arc::new(AtomicUsize::new(0));
+    let peak = Arc::new(AtomicUsize::new(0));
+    let (started_tx, started_rx) = mpsc::channel();
+    let (permit_tx, permit_rx) = mpsc::channel();
+    let resolver = PeakTrackingHostnameResolver {
+        active: Arc::clone(&active),
+        peak: Arc::clone(&peak),
+        started_tx,
+        permits: Arc::new(Mutex::new(permit_rx)),
+    };
+
+    let task = start_scan_with_probe_and_hostname_resolver(
+        "192.168.1.0/29",
+        host_count,
+        Arc::new(AllHostsFoundProbe),
+        Arc::new(resolver),
+    )
+    .unwrap();
+
+    let events = drain_task(task);
+
+    let hostname_updates: Vec<_> = events
+        .iter()
+        .filter_map(|event| match event {
+            ScanEvent::HostnameResolved { ip, hostname, .. } => Some((ip.clone(), hostname.clone())),
+            _ => None,
+        })
+        .collect();
+
+    assert!(events.iter().any(|event| matches!(
+        event,
+        ScanEvent::Finished {
+            scanned_hosts: 6,
+            found_hosts: 6,
+            ..
+        }
+    )));
+    assert_eq!(hostname_updates.len(), 0);
+
+    for _ in 0..(HOSTNAME_WORKER_COUNT + HOSTNAME_QUEUE_CAPACITY) {
+        let _ = permit_tx.send(());
+    }
+
+    thread::sleep(Duration::from_millis(150));
+
+    let all_started: Vec<_> = started_rx.try_iter().collect();
+
+    assert_eq!(peak.load(Ordering::SeqCst), 2);
+    assert_eq!(active.load(Ordering::SeqCst), 0);
+    assert_eq!(
+        all_started.len(),
+        HOSTNAME_WORKER_COUNT + HOSTNAME_QUEUE_CAPACITY
+    );
+}
+
+#[derive(Clone)]
+struct PanickingThenWorkingHostnameResolver {
+    panics_remaining: Arc<AtomicUsize>,
+    started_tx: mpsc::Sender<String>,
+}
+
+impl HostnameResolver for PanickingThenWorkingHostnameResolver {
+    fn resolve(&self, ip: &str) -> Option<String> {
+        self.started_tx
+            .send(ip.to_string())
+            .expect("test should observe hostname resolution start");
+
+        if self.panics_remaining.fetch_update(
+            Ordering::SeqCst,
+            Ordering::SeqCst,
+            |remaining| remaining.checked_sub(1),
+        )
+        .is_ok()
+        {
+            panic!("resolver panic should not kill shared worker");
+        }
+
+        Some(format!("host-{ip}"))
+    }
+}
+
+#[test]
+fn runtime_recovers_from_hostname_resolver_panics() {
+    let _lock = hostname_runtime_test_lock();
+    let (started_tx, started_rx) = mpsc::channel();
+    let resolver = PanickingThenWorkingHostnameResolver {
+        panics_remaining: Arc::new(AtomicUsize::new(HOSTNAME_WORKER_COUNT)),
+        started_tx,
+    };
+
+    let task = start_scan_with_probe_and_hostname_resolver(
+        "192.168.1.0/29",
+        1,
+        Arc::new(AllHostsFoundProbe),
+        Arc::new(resolver),
+    )
+    .unwrap();
+
+    let events = drain_task(task);
+    thread::sleep(Duration::from_millis(150));
+
+    let started: Vec<_> = started_rx.try_iter().collect();
+    let hostname_updates: Vec<_> = events
+        .iter()
+        .filter_map(|event| match event {
+            ScanEvent::HostnameResolved { ip, hostname, .. } => Some((ip.clone(), hostname.clone())),
+            _ => None,
+        })
+        .collect();
+
+    assert!(events.iter().any(|event| matches!(
+        event,
+        ScanEvent::Finished {
+            scanned_hosts: 6,
+            found_hosts: 6,
+            ..
+        }
+    )));
+    assert!(started.len() >= HOSTNAME_WORKER_COUNT);
+    assert!(
+        !hostname_updates.is_empty(),
+        "workers should continue processing jobs after resolver panics"
+    );
 }
