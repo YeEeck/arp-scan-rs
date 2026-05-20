@@ -694,3 +694,117 @@ fn runtime_suppresses_hostname_updates_after_cancellation() {
         .join()
         .expect("scan task should exit cleanly");
 }
+
+#[derive(Clone)]
+struct HostFoundThenBlockedProbe {
+    permits: Arc<Mutex<mpsc::Receiver<()>>>,
+}
+
+impl ArpProbe for HostFoundThenBlockedProbe {
+    fn probe(&self, ip: &str) -> io::Result<Option<[u8; 6]>> {
+        if ip.ends_with(".1") {
+            return Ok(Some([0xAA, 0xBB, 0xCC, 0xDD, 0xEE, 0x01]));
+        }
+
+        self.permits
+            .lock()
+            .expect("probe permits should not be poisoned")
+            .recv_timeout(Duration::from_secs(2))
+            .expect("test should release blocked probes");
+
+        Ok(None)
+    }
+}
+
+#[test]
+fn runtime_caps_hostname_workers_across_cancelled_scan_cycles() {
+    let scan_count = 6;
+    let (hostname_started_tx, hostname_started_rx) = mpsc::channel();
+    let (hostname_permit_tx, hostname_permit_rx) = mpsc::channel();
+    let resolver = BlockingHostnameResolver {
+        started_tx: hostname_started_tx,
+        permits: Arc::new(Mutex::new(hostname_permit_rx)),
+    };
+    let resolver = Arc::new(resolver);
+
+    let (wave1_probe_permit_tx, wave1_probe_permit_rx) = mpsc::channel();
+    let wave1_probe = Arc::new(HostFoundThenBlockedProbe {
+        permits: Arc::new(Mutex::new(wave1_probe_permit_rx)),
+    });
+
+    let wave1_tasks: Vec<_> = (0..scan_count)
+        .map(|_| {
+            start_scan_with_probe_and_hostname_resolver(
+                "192.168.1.0/30",
+                1,
+                Arc::clone(&wave1_probe),
+                Arc::clone(&resolver),
+            )
+            .unwrap()
+        })
+        .collect();
+
+    let mut wave1_hostname_starts = Vec::new();
+    while let Ok(ip) = hostname_started_rx.recv_timeout(Duration::from_millis(150)) {
+        wave1_hostname_starts.push(ip);
+    }
+
+    assert!(
+        !wave1_hostname_starts.is_empty(),
+        "first wave should start at least one hostname lookup"
+    );
+    assert!(
+        wave1_hostname_starts.len() < scan_count,
+        "hostname concurrency should not scale to one worker per scan"
+    );
+
+    for task in &wave1_tasks {
+        task.cancel_flag.store(true, Ordering::SeqCst);
+    }
+    for _ in 0..scan_count {
+        wave1_probe_permit_tx.send(()).unwrap();
+    }
+    for task in wave1_tasks {
+        task.join_handle
+            .join()
+            .expect("first-wave scan task should exit cleanly");
+    }
+
+    let (wave2_probe_permit_tx, wave2_probe_permit_rx) = mpsc::channel();
+    let wave2_probe = Arc::new(HostFoundThenBlockedProbe {
+        permits: Arc::new(Mutex::new(wave2_probe_permit_rx)),
+    });
+
+    let wave2_tasks: Vec<_> = (0..scan_count)
+        .map(|_| {
+            start_scan_with_probe_and_hostname_resolver(
+                "192.168.1.0/30",
+                1,
+                Arc::clone(&wave2_probe),
+                Arc::clone(&resolver),
+            )
+            .unwrap()
+        })
+        .collect();
+
+    assert_eq!(
+        hostname_started_rx.recv_timeout(Duration::from_millis(150)),
+        Err(mpsc::RecvTimeoutError::Timeout),
+        "second wave should stay queued while first-wave hostname lookups occupy the shared pool"
+    );
+
+    for task in &wave2_tasks {
+        task.cancel_flag.store(true, Ordering::SeqCst);
+    }
+    for _ in 0..scan_count {
+        wave2_probe_permit_tx.send(()).unwrap();
+    }
+    for _ in 0..wave1_hostname_starts.len() {
+        hostname_permit_tx.send(()).unwrap();
+    }
+    for task in wave2_tasks {
+        task.join_handle
+            .join()
+            .expect("second-wave scan task should exit cleanly");
+    }
+}
