@@ -100,7 +100,12 @@ fn ui_state_updates_hostname_in_place_and_ignores_stale_hostname_events() {
     state.begin_scan(41);
     state.apply_event(ScanEvent::Started {
         task_id: 41,
-        total_hosts: 1,
+        total_hosts: 2,
+    });
+    state.apply_event(ScanEvent::HostFound {
+        task_id: 41,
+        ip: "192.168.1.20".into(),
+        mac: "AA:BB:CC:DD:EE:20".into(),
     });
     state.apply_event(ScanEvent::HostFound {
         task_id: 41,
@@ -120,10 +125,13 @@ fn ui_state_updates_hostname_in_place_and_ignores_stale_hostname_events() {
 
     let snapshot = state.snapshot();
 
-    assert_eq!(snapshot.rows.len(), 1);
+    assert_eq!(snapshot.rows.len(), 2);
     assert_eq!(snapshot.rows[0].ip, "192.168.1.10");
     assert_eq!(snapshot.rows[0].mac, "AA:BB:CC:DD:EE:10");
     assert_eq!(snapshot.rows[0].hostname, "printer.lan");
+    assert_eq!(snapshot.rows[1].ip, "192.168.1.20");
+    assert_eq!(snapshot.rows[1].mac, "AA:BB:CC:DD:EE:20");
+    assert_eq!(snapshot.rows[1].hostname, "");
 }
 
 #[test]
