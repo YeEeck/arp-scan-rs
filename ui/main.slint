@@ -9,21 +9,21 @@ export struct ResultListData {
 component ResultListPanel inherits Rectangle {
     in property <[ResultListData]> rows;
 
-    private property <length> panel-padding: 10px;
-    private property <length> header-height: 34px;
-    private property <length> row-height: 34px;
-    private property <length> column-spacing: 12px;
-    private property <length> ip-column-width: 180px;
-    private property <length> mac-column-width: 180px;
-    private property <length> hostname-column-min-width: 0px;
+    private property <length> panel-padding: 12px;
+    private property <length> header-height: 36px;
+    private property <length> row-height: 38px;
+    private property <length> column-spacing: 10px;
+    private property <length> ip-column-width: 168px;
+    private property <length> mac-column-width: 164px;
+    private property <length> hostname-column-min-width: 96px;
     private property <length> row-font-size: 15px;
-    private property <length> header-font-size: 15px;
+    private property <length> header-font-size: 14px;
 
     clip: true;
     border-width: 1px;
-    border-color: #c8d1dc;
-    border-radius: 10px;
-    background: #fdfdfe;
+    border-color: #c4ccd7;
+    border-radius: 12px;
+    background: #f7f9fc;
 
     VerticalLayout {
         padding: root.panel-padding;
@@ -33,8 +33,15 @@ component ResultListPanel inherits Rectangle {
             clip: true;
             vertical-stretch: 0;
             height: root.header-height;
-            border-radius: 7px;
-            background: #e8edf4;
+            border-radius: 8px;
+            background: #e7edf5;
+
+            Rectangle {
+                y: parent.height - self.height;
+                width: parent.width;
+                height: 1px;
+                background: #cfd8e3;
+            }
 
             header-layout := HorizontalLayout {
                 height: root.header-height;
@@ -48,11 +55,11 @@ component ResultListPanel inherits Rectangle {
                     max-width: root.ip-column-width;
 
                     Text {
-                        x: 10px;
+                        x: 8px;
                         width: parent.width - self.x;
                         height: 100%;
                         text: "IP";
-                        color: #2f3946;
+                        color: #314050;
                         font-size: root.header-font-size;
                         font-weight: 700;
                         vertical-alignment: center;
@@ -66,11 +73,11 @@ component ResultListPanel inherits Rectangle {
                     max-width: root.mac-column-width;
 
                     Text {
-                        x: 6px;
+                        x: 8px;
                         width: parent.width - self.x;
                         height: 100%;
                         text: "MAC";
-                        color: #2f3946;
+                        color: #314050;
                         font-size: root.header-font-size;
                         font-weight: 700;
                         vertical-alignment: center;
@@ -83,13 +90,13 @@ component ResultListPanel inherits Rectangle {
                     horizontal-stretch: 1;
 
                     hostname-column-header := Text {
-                        x: 6px;
+                        x: 8px;
                         width: parent.width - self.x;
                         height: 100%;
                         text: "Hostname";
                         accessible-role: text;
                         accessible-value: self.text;
-                        color: #2f3946;
+                        color: #314050;
                         font-size: root.header-font-size;
                         font-weight: 700;
                         vertical-alignment: center;
@@ -104,11 +111,11 @@ component ResultListPanel inherits Rectangle {
             horizontal-stretch: 1;
             vertical-stretch: 1;
 
-            for row in root.rows: Rectangle {
+            for row[index] in root.rows: Rectangle {
                 min-height: root.row-height;
                 horizontal-stretch: 1;
                 clip: true;
-                background: #fbfcfe;
+                background: Math.mod(index, 2) == 0 ? #fcfdff : #f7f9fc;
 
                 VerticalLayout {
                     spacing: 0px;
@@ -116,7 +123,7 @@ component ResultListPanel inherits Rectangle {
                     Rectangle {
                         min-height: root.row-height - 1px;
                         horizontal-stretch: 1;
-                        background: #fbfcfe;
+                        background: Math.mod(index, 2) == 0 ? #fcfdff : #f7f9fc;
 
                         HorizontalLayout {
                             spacing: root.column-spacing;
@@ -128,7 +135,7 @@ component ResultListPanel inherits Rectangle {
                                 clip: true;
 
                                 Text {
-                                    x: 10px;
+                                    x: 8px;
                                     width: parent.width - self.x;
                                     height: 100%;
                                     text: row.ip;
@@ -146,7 +153,7 @@ component ResultListPanel inherits Rectangle {
                                 clip: true;
 
                                 Text {
-                                    x: 6px;
+                                    x: 8px;
                                     width: parent.width - self.x;
                                     height: 100%;
                                     text: row.mac;
@@ -163,7 +170,7 @@ component ResultListPanel inherits Rectangle {
                                 clip: true;
 
                                 hostname-cell-text := Text {
-                                    x: 6px;
+                                    x: 8px;
                                     width: parent.width - self.x;
                                     height: 100%;
                                     text: row.hostname;
@@ -182,7 +189,7 @@ component ResultListPanel inherits Rectangle {
                         height: 1px;
                         horizontal-stretch: 1;
                         vertical-stretch: 0;
-                        background: #e1e6ed;
+                        background: #dbe3ec;
                     }
                 }
             }

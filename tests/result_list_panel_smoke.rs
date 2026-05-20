@@ -1,6 +1,6 @@
 use arp_scan_rs::ui::{ResultListData, ResultListPanel};
 use i_slint_backend_testing::ElementHandle;
-use slint::{Model, ModelRc, VecModel};
+use slint::{ComponentHandle, LogicalSize, Model, ModelRc, VecModel};
 
 #[test]
 fn result_list_panel_smoke_test_exposes_generated_bindings() {
@@ -66,5 +66,54 @@ fn result_list_panel_renders_hostname_text_in_hostname_column() {
     assert_eq!(
         hostname_cell.accessible_value().as_deref(),
         Some("printer.local")
+    );
+}
+
+#[test]
+fn result_list_panel_keeps_hostname_column_reachable_with_empty_and_filled_rows() {
+    let _backend = i_slint_backend_testing::init_no_event_loop();
+
+    let panel = ResultListPanel::new().unwrap();
+    panel.window().set_size(LogicalSize::new(480.0, 220.0));
+    let rows = VecModel::from(vec![
+        ResultListData {
+            ip: "192.168.1.2".into(),
+            mac: "AA:AA:AA:AA:AA:02".into(),
+            hostname: "printer.local".into(),
+        },
+        ResultListData {
+            ip: "192.168.1.20".into(),
+            mac: "AA:AA:AA:AA:AA:14".into(),
+            hostname: "".into(),
+        },
+    ]);
+
+    panel.set_rows(ModelRc::from(std::rc::Rc::new(rows)));
+
+    let hostname_header = ElementHandle::find_by_element_id(
+        &panel,
+        "ResultListPanel::hostname-column-header",
+    )
+    .next()
+    .expect("hostname column header should stay present");
+    assert_eq!(hostname_header.accessible_value().as_deref(), Some("Hostname"));
+    assert!(
+        hostname_header.size().width >= 90.0,
+        "hostname header should keep enough visible width for a narrow panel, got {}",
+        hostname_header.size().width
+    );
+
+    let hostname_cell =
+        ElementHandle::find_by_element_id(&panel, "ResultListPanel::hostname-cell-text")
+            .next()
+            .expect("hostname cell text should stay present");
+    assert_eq!(
+        hostname_cell.accessible_value().as_deref(),
+        Some("printer.local")
+    );
+    assert!(
+        hostname_cell.size().width >= 90.0,
+        "hostname cell should keep enough visible width for a narrow panel, got {}",
+        hostname_cell.size().width
     );
 }
