@@ -7,6 +7,7 @@ use crate::scan_master::ScanEvent;
 pub struct ResultRow {
     pub ip: String,
     pub mac: String,
+    pub hostname: String,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -113,7 +114,11 @@ impl ScanUiState {
             ScanEvent::HostFound { ip, mac, .. } => {
                 let key = ip_to_key(&ip);
                 let index = self.results.range(..key).count();
-                let row = ResultRow { ip, mac };
+                let row = ResultRow {
+                    ip,
+                    mac,
+                    hostname: String::new(),
+                };
 
                 let row_mutation = if self.results.insert(key, row.clone()).is_some() {
                     RowMutation::Update { index, row }
@@ -123,7 +128,20 @@ impl ScanUiState {
 
                 ApplyOutcome::applied(row_mutation)
             }
-            ScanEvent::HostnameResolved { .. } => ApplyOutcome::applied(RowMutation::None),
+            ScanEvent::HostnameResolved { ip, hostname, .. } => {
+                let key = ip_to_key(&ip);
+                let index = self.results.range(..key).count();
+                let Some(row) = self.results.get_mut(&key) else {
+                    return ApplyOutcome::applied(RowMutation::None);
+                };
+
+                row.hostname = hostname;
+
+                ApplyOutcome::applied(RowMutation::Update {
+                    index,
+                    row: row.clone(),
+                })
+            }
             ScanEvent::Finished {
                 scanned_hosts,
                 found_hosts,

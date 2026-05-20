@@ -45,8 +45,10 @@ fn ui_state_sorts_deduplicates_and_ignores_stale_events() {
     assert_eq!(snapshot.rows.len(), 2);
     assert_eq!(snapshot.rows[0].ip, "192.168.1.2");
     assert_eq!(snapshot.rows[0].mac, "AA:AA:AA:AA:AA:02");
+    assert_eq!(snapshot.rows[0].hostname, "");
     assert_eq!(snapshot.rows[1].ip, "192.168.1.20");
     assert_eq!(snapshot.rows[1].mac, "AA:AA:AA:AA:AA:20");
+    assert_eq!(snapshot.rows[1].hostname, "");
 }
 
 #[test]
@@ -88,6 +90,40 @@ fn ui_state_cancel_preserves_results_and_marks_status_cancelled() {
     assert_eq!(snapshot.rows.len(), 1);
     assert_eq!(snapshot.rows[0].ip, "192.168.1.8");
     assert_eq!(snapshot.rows[0].mac, "AA:AA:AA:AA:AA:08");
+    assert_eq!(snapshot.rows[0].hostname, "");
+}
+
+#[test]
+fn ui_state_updates_hostname_in_place_and_ignores_stale_hostname_events() {
+    let mut state = ScanUiState::default();
+
+    state.begin_scan(41);
+    state.apply_event(ScanEvent::Started {
+        task_id: 41,
+        total_hosts: 1,
+    });
+    state.apply_event(ScanEvent::HostFound {
+        task_id: 41,
+        ip: "192.168.1.10".into(),
+        mac: "AA:BB:CC:DD:EE:10".into(),
+    });
+    state.apply_event(ScanEvent::HostnameResolved {
+        task_id: 41,
+        ip: "192.168.1.10".into(),
+        hostname: "printer.lan".into(),
+    });
+    state.apply_event(ScanEvent::HostnameResolved {
+        task_id: 40,
+        ip: "192.168.1.10".into(),
+        hostname: "stale.lan".into(),
+    });
+
+    let snapshot = state.snapshot();
+
+    assert_eq!(snapshot.rows.len(), 1);
+    assert_eq!(snapshot.rows[0].ip, "192.168.1.10");
+    assert_eq!(snapshot.rows[0].mac, "AA:BB:CC:DD:EE:10");
+    assert_eq!(snapshot.rows[0].hostname, "printer.lan");
 }
 
 #[test]
