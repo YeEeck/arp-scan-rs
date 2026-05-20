@@ -15,4 +15,4 @@ i-slint-backend-testing = "1.14.1"
 slint-build = "1.14.1"
 
 [target.'cfg(target_os = "windows")'.dependencies]
-windows = { version = "0.52", features = ["Win32_NetworkManagement_IpHelper"] }
+windows = { version = "0.52", features = ["Win32_Foundation", "Win32_NetworkManagement_IpHelper", "Win32_NetworkManagement_Ndis", "Win32_Networking_WinSock"] }

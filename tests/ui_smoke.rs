@@ -1,8 +1,8 @@
-use arp_scan_rs::ui::{MainWindow, ResultListData};
+use arp_scan_rs::ui::{MainWindow, NetworkInterfaceItem, ResultListData};
 use slint::{Model, ModelRc, VecModel};
 
 #[test]
-fn main_window_smoke_test_exposes_generated_bindings() {
+fn main_window_smoke_test_exposes_interface_bindings_and_defaults() {
     let _backend = i_slint_backend_testing::init_no_event_loop();
 
     let window = MainWindow::new().unwrap();
@@ -18,8 +18,21 @@ fn main_window_smoke_test_exposes_generated_bindings() {
             hostname: "".into(),
         },
     ]);
+    let interfaces = VecModel::from(vec![
+        NetworkInterfaceItem {
+            label: "Select network interface".into(),
+        },
+        NetworkInterfaceItem {
+            label: "Ethernet".into(),
+        },
+        NetworkInterfaceItem {
+            label: "Loopback Pseudo-Interface (Loopback)".into(),
+        },
+    ]);
 
     window.set_result_list_data_model(ModelRc::from(std::rc::Rc::new(rows)));
+    window.set_network_interface_model(ModelRc::from(std::rc::Rc::new(interfaces)));
+    window.set_selected_network_interface_index(0);
     window.set_input_mode(0);
     window.set_cidr_text("192.168.1.0/24".into());
     window.set_ip_text("192.168.1.23".into());
@@ -29,6 +42,22 @@ fn main_window_smoke_test_exposes_generated_bindings() {
     window.set_scan_enabled(false);
     window.set_cancel_enabled(true);
 
+    assert_eq!(window.get_selected_network_interface_index(), 0);
+    let interface_model = window.get_network_interface_model();
+    let interface_rows = interface_model
+        .as_any()
+        .downcast_ref::<VecModel<NetworkInterfaceItem>>()
+        .unwrap();
+    assert_eq!(interface_rows.row_count(), 3);
+    assert_eq!(
+        interface_rows.row_data(0).unwrap().label,
+        "Select network interface"
+    );
+    assert_eq!(interface_rows.row_data(1).unwrap().label, "Ethernet");
+    assert_eq!(
+        interface_rows.row_data(2).unwrap().label,
+        "Loopback Pseudo-Interface (Loopback)"
+    );
     assert_eq!(window.get_input_mode(), 0);
     assert_eq!(window.get_cidr_text(), "192.168.1.0/24");
     assert_eq!(window.get_ip_text(), "192.168.1.23");
