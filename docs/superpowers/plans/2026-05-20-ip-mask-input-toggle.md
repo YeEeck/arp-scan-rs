@@ -545,17 +545,17 @@ git commit -m "feat: 接入扫描目标输入归一化"
 **Files:**
 - Modify: `docs/superpowers/plans/2026-05-20-ip-mask-input-toggle.md`
 
-- [ ] **Step 1: Run focused tests**
+- [x] **Step 1: Run focused tests**
 
 Run: `cargo test --test scan_target --test ui_smoke -v`
 Expected: PASS with all targeted tests green
 
-- [ ] **Step 2: Run full verification**
+- [x] **Step 2: Run full verification**
 
 Run: `cargo check && cargo test -v`
 Expected: `cargo check` exits 0 and `cargo test -v` exits 0 with no failing tests
 
-- [ ] **Step 3: Mark plan progress**
+- [x] **Step 3: Mark plan progress**
 
 ```markdown
 - [x] Task 1 completed
