@@ -2,6 +2,7 @@ use std::io;
 use std::panic::{self, AssertUnwindSafe};
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::mpsc::{self, Receiver};
+use std::sync::Mutex;
 use std::sync::Arc;
 use std::thread;
 use std::thread::JoinHandle;
@@ -152,6 +153,11 @@ enum ProbeResult {
     },
 }
 
+#[derive(Debug)]
+struct HostnameJob {
+    ip: String,
+}
+
 #[derive(Clone, Copy, Debug, Default)]
 struct NoopHostnameResolver;
 
@@ -182,6 +188,13 @@ fn run_scan_loop<P, H>(
     let mut dispatch_exhausted = false;
     let mut pending_failure: Option<String> = None;
     let mut dispatch_tx = Some(result_tx);
+    let hostname_job_tx = start_hostname_workers(
+        task_id,
+        max_in_flight,
+        Arc::clone(&hostname_resolver),
+        Arc::clone(&cancel_flag),
+        event_tx.clone(),
+    );
 
     while !dispatch_exhausted || in_flight > 0 {
         while pending_failure.is_none()
@@ -247,12 +260,7 @@ fn run_scan_loop<P, H>(
                             ip: ip.clone(),
                             mac: formatted_mac,
                         });
-                        spawn_hostname_lookup(
-                            task_id,
-                            ip,
-                            Arc::clone(&hostname_resolver),
-                            event_tx.clone(),
-                        );
+                        let _ = hostname_job_tx.send(HostnameJob { ip });
                     }
                     Ok(None) => {}
                     Err(err) if err.kind() == io::ErrorKind::Unsupported => {
@@ -293,25 +301,59 @@ fn run_scan_loop<P, H>(
     let _ = event_tx.send(terminal_event);
 }
 
-fn spawn_hostname_lookup<H>(
+fn start_hostname_workers<H>(
     task_id: u64,
-    ip: String,
+    worker_count: usize,
     hostname_resolver: Arc<H>,
+    cancel_flag: Arc<AtomicBool>,
     event_tx: mpsc::Sender<ScanEvent>,
-) where
+) -> mpsc::Sender<HostnameJob>
+where
     H: HostnameResolver + Send + Sync + 'static,
 {
-    thread::spawn(move || {
-        let Some(hostname) = hostname_resolver.resolve(&ip) else {
-            return;
-        };
+    let (hostname_job_tx, hostname_job_rx) = mpsc::channel();
+    let hostname_job_rx = Arc::new(Mutex::new(hostname_job_rx));
 
-        let _ = event_tx.send(ScanEvent::HostnameResolved {
-            task_id,
-            ip,
-            hostname,
+    for _ in 0..worker_count {
+        let hostname_resolver = Arc::clone(&hostname_resolver);
+        let cancel_flag = Arc::clone(&cancel_flag);
+        let event_tx = event_tx.clone();
+        let hostname_job_rx = Arc::clone(&hostname_job_rx);
+
+        thread::spawn(move || {
+            while let Some(job) = recv_hostname_job(&hostname_job_rx) {
+                if cancel_flag.load(Ordering::Relaxed) {
+                    continue;
+                }
+
+                let Some(hostname) = hostname_resolver.resolve(&job.ip) else {
+                    continue;
+                };
+
+                if cancel_flag.load(Ordering::Relaxed) {
+                    continue;
+                }
+
+                let _ = event_tx.send(ScanEvent::HostnameResolved {
+                    task_id,
+                    ip: job.ip,
+                    hostname,
+                });
+            }
         });
-    });
+    }
+
+    hostname_job_tx
+}
+
+fn recv_hostname_job(
+    hostname_job_rx: &Arc<Mutex<mpsc::Receiver<HostnameJob>>>,
+) -> Option<HostnameJob> {
+    hostname_job_rx
+        .lock()
+        .expect("hostname job receiver should not be poisoned")
+        .recv()
+        .ok()
 }
 
 fn format_mac(mac: [u8; 6]) -> String {

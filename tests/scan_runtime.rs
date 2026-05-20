@@ -470,3 +470,227 @@ fn runtime_streams_hostname_updates_without_waiting_for_lookup() {
         .join()
         .expect("scan task should exit cleanly");
 }
+
+#[derive(Clone)]
+struct AllHostsFoundProbe;
+
+impl ArpProbe for AllHostsFoundProbe {
+    fn probe(&self, ip: &str) -> io::Result<Option<[u8; 6]>> {
+        let suffix = ip
+            .rsplit('.')
+            .next()
+            .expect("test IPs should contain an IPv4 suffix")
+            .parse::<u8>()
+            .expect("IPv4 suffix should parse");
+        Ok(Some([0xAA, 0xBB, 0xCC, 0xDD, 0xEE, suffix]))
+    }
+}
+
+#[derive(Clone)]
+struct PeakTrackingHostnameResolver {
+    active: Arc<AtomicUsize>,
+    peak: Arc<AtomicUsize>,
+    started_tx: mpsc::Sender<String>,
+    permits: Arc<Mutex<mpsc::Receiver<()>>>,
+}
+
+impl HostnameResolver for PeakTrackingHostnameResolver {
+    fn resolve(&self, ip: &str) -> Option<String> {
+        let current = self.active.fetch_add(1, Ordering::SeqCst) + 1;
+        self.peak.fetch_max(current, Ordering::SeqCst);
+        self.started_tx
+            .send(ip.to_string())
+            .expect("test should observe hostname resolution start");
+
+        let permit = self
+            .permits
+            .lock()
+            .expect("hostname permits should not be poisoned")
+            .recv_timeout(Duration::from_secs(2));
+
+        self.active.fetch_sub(1, Ordering::SeqCst);
+
+        permit.ok()?;
+        Some(format!("host-{ip}"))
+    }
+}
+
+#[test]
+fn runtime_bounds_hostname_resolution_concurrency() {
+    let active = Arc::new(AtomicUsize::new(0));
+    let peak = Arc::new(AtomicUsize::new(0));
+    let (started_tx, started_rx) = mpsc::channel();
+    let (permit_tx, permit_rx) = mpsc::channel();
+    let resolver = PeakTrackingHostnameResolver {
+        active: Arc::clone(&active),
+        peak: Arc::clone(&peak),
+        started_tx,
+        permits: Arc::new(Mutex::new(permit_rx)),
+    };
+
+    let task = start_scan_with_probe_and_hostname_resolver(
+        "192.168.1.0/29",
+        2,
+        Arc::new(AllHostsFoundProbe),
+        Arc::new(resolver),
+    )
+    .unwrap();
+
+    let first_two = vec![
+        started_rx
+            .recv_timeout(Duration::from_secs(1))
+            .expect("first hostname lookup should start"),
+        started_rx
+            .recv_timeout(Duration::from_secs(1))
+            .expect("second hostname lookup should start"),
+    ];
+
+    assert_eq!(peak.load(Ordering::SeqCst), 2);
+    assert_eq!(
+        started_rx.recv_timeout(Duration::from_millis(150)),
+        Err(mpsc::RecvTimeoutError::Timeout)
+    );
+
+    for _ in 0..6 {
+        permit_tx.send(()).unwrap();
+    }
+
+    let events = drain_task(task);
+    let mut all_started: Vec<_> = started_rx.try_iter().collect();
+    all_started.extend(first_two);
+    all_started.sort();
+
+    let hostname_updates: Vec<_> = events
+        .iter()
+        .filter_map(|event| match event {
+            ScanEvent::HostnameResolved { ip, hostname, .. } => Some((ip.clone(), hostname.clone())),
+            _ => None,
+        })
+        .collect();
+
+    assert_eq!(active.load(Ordering::SeqCst), 0);
+    assert_eq!(peak.load(Ordering::SeqCst), 2);
+    assert_eq!(
+        all_started,
+        vec![
+            "192.168.1.1".to_string(),
+            "192.168.1.2".to_string(),
+            "192.168.1.3".to_string(),
+            "192.168.1.4".to_string(),
+            "192.168.1.5".to_string(),
+            "192.168.1.6".to_string(),
+        ]
+    );
+    assert_eq!(hostname_updates.len(), 6);
+}
+
+#[derive(Clone)]
+struct OneHostFoundThenBlockedProbe {
+    started_tx: mpsc::Sender<String>,
+    permits: Arc<Mutex<mpsc::Receiver<()>>>,
+}
+
+impl ArpProbe for OneHostFoundThenBlockedProbe {
+    fn probe(&self, ip: &str) -> io::Result<Option<[u8; 6]>> {
+        self.started_tx
+            .send(ip.to_string())
+            .expect("test should observe probe start");
+
+        self.permits
+            .lock()
+            .expect("probe permits should not be poisoned")
+            .recv_timeout(Duration::from_secs(2))
+            .expect("test should release blocked probes");
+
+        if ip.ends_with(".1") {
+            Ok(Some([0xAA, 0xBB, 0xCC, 0xDD, 0xEE, 0x01]))
+        } else {
+            Ok(None)
+        }
+    }
+}
+
+#[test]
+fn runtime_suppresses_hostname_updates_after_cancellation() {
+    let (probe_started_tx, probe_started_rx) = mpsc::channel();
+    let (probe_permit_tx, probe_permit_rx) = mpsc::channel();
+    let (hostname_started_tx, hostname_started_rx) = mpsc::channel();
+    let (hostname_permit_tx, hostname_permit_rx) = mpsc::channel();
+    let probe = OneHostFoundThenBlockedProbe {
+        started_tx: probe_started_tx,
+        permits: Arc::new(Mutex::new(probe_permit_rx)),
+    };
+    let resolver = BlockingHostnameResolver {
+        started_tx: hostname_started_tx,
+        permits: Arc::new(Mutex::new(hostname_permit_rx)),
+    };
+
+    let task = start_scan_with_probe_and_hostname_resolver(
+        "192.168.1.0/29",
+        1,
+        Arc::new(probe),
+        Arc::new(resolver),
+    )
+    .unwrap();
+
+    assert!(matches!(
+        task.events.recv_timeout(Duration::from_secs(1)),
+        Ok(ScanEvent::Started { .. })
+    ));
+    assert_eq!(
+        probe_started_rx
+            .recv_timeout(Duration::from_secs(1))
+            .expect("first probe should start"),
+        "192.168.1.1".to_string()
+    );
+
+    probe_permit_tx.send(()).unwrap();
+
+    assert!(matches!(
+        task.events.recv_timeout(Duration::from_secs(1)),
+        Ok(ScanEvent::HostFound { ip, .. }) if ip == "192.168.1.1"
+    ));
+    assert!(matches!(
+        task.events.recv_timeout(Duration::from_secs(1)),
+        Ok(ScanEvent::Progress {
+            scanned_hosts: 1,
+            ..
+        })
+    ));
+    assert_eq!(
+        hostname_started_rx
+            .recv_timeout(Duration::from_secs(1))
+            .expect("hostname lookup should have started"),
+        "192.168.1.1".to_string()
+    );
+
+    task.cancel_flag.store(true, Ordering::SeqCst);
+
+    assert_eq!(
+        probe_started_rx
+            .recv_timeout(Duration::from_secs(1))
+            .expect("second probe should start before cancellation is observed"),
+        "192.168.1.2".to_string()
+    );
+    probe_permit_tx.send(()).unwrap();
+
+    let mut saw_cancelled = false;
+    while !saw_cancelled {
+        let event = task
+            .events
+            .recv_timeout(Duration::from_secs(1))
+            .expect("scan should emit a terminal cancellation event");
+        saw_cancelled = matches!(event, ScanEvent::Cancelled { .. });
+    }
+
+    hostname_permit_tx.send(()).unwrap();
+
+    assert!(matches!(
+        task.events.recv_timeout(Duration::from_millis(150)),
+        Err(mpsc::RecvTimeoutError::Timeout) | Err(mpsc::RecvTimeoutError::Disconnected)
+    ));
+
+    task.join_handle
+        .join()
+        .expect("scan task should exit cleanly");
+}
