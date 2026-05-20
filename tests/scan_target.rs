@@ -1,6 +1,6 @@
 use arp_scan_rs::scan_target::{
-    convert_cidr_to_ip_and_mask, convert_ip_and_mask_to_cidr, normalize_scan_target, InputMode,
-    ScanTargetInput, UiInputState,
+    convert_cidr_to_ip_and_mask, convert_ip_and_mask_to_cidr, normalize_scan_target,
+    prepare_scan_target, InputMode, ScanTargetInput, UiInputState,
 };
 
 #[test]
@@ -112,4 +112,16 @@ fn invalid_mode_switch_keeps_last_known_destination_values() {
     assert_eq!(switched.mode, InputMode::IpAndMask);
     assert_eq!(switched.ip_text, "10.0.0.8");
     assert_eq!(switched.mask_text, "255.255.255.0");
+}
+
+#[test]
+fn prepare_scan_target_uses_visible_ip_and_mask_mode() {
+    let state = UiInputState {
+        mode: InputMode::IpAndMask,
+        cidr_text: "10.0.0.0/8".into(),
+        ip_text: "192.168.1.23".into(),
+        mask_text: "255.255.255.0".into(),
+    };
+
+    assert_eq!(prepare_scan_target(&state).unwrap(), "192.168.1.0/24");
 }

@@ -5,6 +5,7 @@ use std::sync::{Arc, Mutex};
 use std::thread;
 
 use arp_scan_rs::scan_master::{start_scan, ScanEvent, ScanTask};
+use arp_scan_rs::scan_target::{prepare_scan_target, InputMode, UiInputState};
 use arp_scan_rs::ui::{MainWindow, ResultListData};
 use arp_scan_rs::ui_state::{RowMutation, ScanUiState, ViewState};
 use slint::{ComponentHandle, Model, ModelRc, VecModel};
@@ -19,6 +20,11 @@ struct ActiveScan {
 
 fn main() {
     let window = MainWindow::new().unwrap();
+    window.set_input_mode(0);
+    window.set_ip_text("192.168.1.23".into());
+    window.set_mask_text("255.255.255.0".into());
+    window.set_cidr_text("192.168.1.0/24".into());
+
     let ui_state = Arc::new(Mutex::new(ScanUiState::default()));
     let active_scan = Arc::new(Mutex::new(None::<ActiveScan>));
 
@@ -33,7 +39,27 @@ fn main() {
             return;
         };
 
-        let cidr = window.get_cidr().to_string();
+        let input_mode = match window.get_input_mode() {
+            0 => InputMode::IpAndMask,
+            _ => InputMode::Cidr,
+        };
+        let cidr = match prepare_scan_target(&UiInputState {
+            mode: input_mode,
+            cidr_text: window.get_cidr_text().to_string(),
+            ip_text: window.get_ip_text().to_string(),
+            mask_text: window.get_mask_text().to_string(),
+        }) {
+            Ok(cidr) => cidr,
+            Err(err) => {
+                let mut state = ui_state_for_start.lock().unwrap();
+                let row_mutation = state.fail_to_start(err.to_string());
+                let view_state = state.view_state();
+                drop(state);
+                apply_view_state(&window, view_state);
+                apply_row_mutation(&window, row_mutation);
+                return;
+            }
+        };
         let task = match start_scan(&cidr, MAX_IN_FLIGHT) {
             Ok(task) => task,
             Err(err) => {

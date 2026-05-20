@@ -40,8 +40,7 @@ impl UiInputState {
                 }
             }
             (InputMode::IpAndMask, InputMode::Cidr) => {
-                if let Ok(cidr_text) = convert_ip_and_mask_to_cidr(&self.ip_text, &self.mask_text)
-                {
+                if let Ok(cidr_text) = convert_ip_and_mask_to_cidr(&self.ip_text, &self.mask_text) {
                     next.cidr_text = cidr_text;
                 }
             }
@@ -68,6 +67,15 @@ pub fn normalize_scan_target(input: &ScanTargetInput) -> Result<String, ScanTarg
         InputMode::Cidr => normalize_cidr(&input.cidr_text),
         InputMode::IpAndMask => normalize_ip_and_mask(&input.ip_text, &input.mask_text),
     }
+}
+
+pub fn prepare_scan_target(state: &UiInputState) -> Result<String, ScanTargetError> {
+    normalize_scan_target(&ScanTargetInput {
+        mode: state.mode,
+        cidr_text: state.cidr_text.clone(),
+        ip_text: state.ip_text.clone(),
+        mask_text: state.mask_text.clone(),
+    })
 }
 
 pub fn convert_cidr_to_ip_and_mask(cidr_text: &str) -> Result<(String, String), ScanTargetError> {
@@ -97,7 +105,9 @@ fn normalize_cidr(cidr_text: &str) -> Result<String, ScanTargetError> {
         .trim()
         .split_once('/')
         .ok_or(ScanTargetError("Invalid CIDR"))?;
-    let ip: Ipv4Addr = ip_text.parse().map_err(|_| ScanTargetError("Invalid CIDR"))?;
+    let ip: Ipv4Addr = ip_text
+        .parse()
+        .map_err(|_| ScanTargetError("Invalid CIDR"))?;
     let prefix: u8 = prefix_text
         .parse()
         .map_err(|_| ScanTargetError("Invalid CIDR"))?;
