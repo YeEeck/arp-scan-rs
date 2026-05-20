@@ -4,7 +4,10 @@ use std::sync::{mpsc, Arc, Mutex};
 use std::thread;
 use std::time::Duration;
 
-use arp_scan_rs::scan_master::{start_scan_with_probe, ArpProbe, ScanEvent, ScanTask};
+use arp_scan_rs::scan_master::{
+    start_scan_with_probe, start_scan_with_probe_and_hostname_resolver, ArpProbe,
+    HostnameResolver, ScanEvent, ScanTask,
+};
 
 #[derive(Clone)]
 struct ControlledProbe {
@@ -355,4 +358,115 @@ fn runtime_drains_in_flight_workers_before_terminal_failed() {
         join_done_rx.recv_timeout(Duration::from_secs(1)),
         Ok(())
     );
+}
+
+#[derive(Clone)]
+struct QuickProbe;
+
+impl ArpProbe for QuickProbe {
+    fn probe(&self, ip: &str) -> io::Result<Option<[u8; 6]>> {
+        if ip.ends_with(".1") {
+            Ok(Some([0xAA, 0xBB, 0xCC, 0xDD, 0xEE, 0x01]))
+        } else {
+            Ok(None)
+        }
+    }
+}
+
+#[derive(Clone)]
+struct BlockingHostnameResolver {
+    started_tx: mpsc::Sender<String>,
+    permits: Arc<Mutex<mpsc::Receiver<()>>>,
+}
+
+impl HostnameResolver for BlockingHostnameResolver {
+    fn resolve(&self, ip: &str) -> Option<String> {
+        self.started_tx
+            .send(ip.to_string())
+            .expect("test should observe hostname resolution start");
+
+        self.permits
+            .lock()
+            .expect("hostname permits should not be poisoned")
+            .recv_timeout(Duration::from_secs(2))
+            .ok()?;
+
+        Some("printer.lan".to_string())
+    }
+}
+
+#[test]
+fn runtime_streams_hostname_updates_without_waiting_for_lookup() {
+    let (started_tx, started_rx) = mpsc::channel();
+    let (permit_tx, permit_rx) = mpsc::channel();
+    let resolver = BlockingHostnameResolver {
+        started_tx,
+        permits: Arc::new(Mutex::new(permit_rx)),
+    };
+
+    let task = start_scan_with_probe_and_hostname_resolver(
+        "192.168.1.1/32",
+        1,
+        Arc::new(QuickProbe),
+        Arc::new(resolver),
+    )
+    .unwrap();
+
+    assert!(matches!(
+        task.events.recv_timeout(Duration::from_secs(1)),
+        Ok(ScanEvent::Started {
+            total_hosts: 1,
+            ..
+        })
+    ));
+    assert!(matches!(
+        task.events.recv_timeout(Duration::from_secs(1)),
+        Ok(ScanEvent::HostFound {
+            ip,
+            mac,
+            ..
+        }) if ip == "192.168.1.1" && mac == "AA:BB:CC:DD:EE:01"
+    ));
+    assert!(matches!(
+        task.events.recv_timeout(Duration::from_secs(1)),
+        Ok(ScanEvent::Progress {
+            scanned_hosts: 1,
+            total_hosts: 1,
+            ..
+        })
+    ));
+    assert!(matches!(
+        task.events.recv_timeout(Duration::from_secs(1)),
+        Ok(ScanEvent::Finished {
+            scanned_hosts: 1,
+            found_hosts: 1,
+            ..
+        })
+    ));
+
+    assert_eq!(
+        started_rx
+            .recv_timeout(Duration::from_secs(1))
+            .expect("hostname lookup should have started"),
+        "192.168.1.1"
+    );
+    assert_eq!(
+        task.events.recv_timeout(Duration::from_millis(100)),
+        Err(mpsc::RecvTimeoutError::Timeout)
+    );
+
+    permit_tx.send(()).unwrap();
+
+    assert!(matches!(
+        task.events.recv_timeout(Duration::from_secs(1)),
+        Ok(ScanEvent::HostnameResolved {
+            ip,
+            hostname,
+            ..
+        }) if ip == "192.168.1.1" && hostname == "printer.lan"
+    ));
+
+    task.join_handle
+        .join()
+        .expect("scan task should exit cleanly");
 }

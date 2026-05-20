@@ -2,18 +2,23 @@ use std::io;
 use std::sync::mpsc;
 use std::thread;
 
+mod hostname;
 mod arp_core;
 mod ip_box;
 pub mod probe;
 pub mod runtime;
 
+pub use hostname::{HostnameResolver, SystemHostnameResolver};
 pub use ip_box::{
     first_ip, host_count, host_iter, hosts, next_ip, HostIter, HostMaterializationError,
     HostMaterializeError,
 };
 pub use arp_core::parse_ip;
 pub use probe::{ArpProbe, SystemArpProbe};
-pub use runtime::{next_task_id, start_scan, start_scan_with_probe, ScanEvent, ScanTask};
+pub use runtime::{
+    next_task_id, start_scan, start_scan_with_probe,
+    start_scan_with_probe_and_hostname_resolver, ScanEvent, ScanTask,
+};
 
 const DEFAULT_MAX_IN_FLIGHT: usize = 256;
 

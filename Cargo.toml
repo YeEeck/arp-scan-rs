@@ -5,6 +5,7 @@ edition = "2024"
 
 [dependencies]
 clap = { version = "4.5.53", features = ["derive"] }
+dns-lookup = "3.0.1"
 slint = "1.14.1"
 
 [dev-dependencies]

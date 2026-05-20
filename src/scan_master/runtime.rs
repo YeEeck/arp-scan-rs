@@ -6,6 +6,7 @@ use std::sync::Arc;
 use std::thread;
 use std::thread::JoinHandle;
 
+use super::hostname::{HostnameResolver, SystemHostnameResolver};
 use super::ip_box::{host_count, host_iter};
 use super::probe::{ArpProbe, SystemArpProbe};
 
@@ -33,6 +34,11 @@ pub enum ScanEvent {
         ip: String,
         mac: String,
     },
+    HostnameResolved {
+        task_id: u64,
+        ip: String,
+        hostname: String,
+    },
     Finished {
         task_id: u64,
         scanned_hosts: usize,
@@ -56,7 +62,12 @@ pub fn next_task_id() -> u64 {
 }
 
 pub fn start_scan(cidr: &str, max_in_flight: usize) -> io::Result<ScanTask> {
-    start_scan_with_probe(cidr, max_in_flight, Arc::new(SystemArpProbe))
+    start_scan_with_probe_and_hostname_resolver(
+        cidr,
+        max_in_flight,
+        Arc::new(SystemArpProbe),
+        Arc::new(SystemHostnameResolver),
+    )
 }
 
 pub fn start_scan_with_probe<P>(
@@ -66,6 +77,24 @@ pub fn start_scan_with_probe<P>(
 ) -> io::Result<ScanTask>
 where
     P: ArpProbe + Send + Sync + 'static,
+{
+    start_scan_with_probe_and_hostname_resolver(
+        cidr,
+        max_in_flight,
+        probe,
+        Arc::new(NoopHostnameResolver),
+    )
+}
+
+pub fn start_scan_with_probe_and_hostname_resolver<P, H>(
+    cidr: &str,
+    max_in_flight: usize,
+    probe: Arc<P>,
+    hostname_resolver: Arc<H>,
+) -> io::Result<ScanTask>
+where
+    P: ArpProbe + Send + Sync + 'static,
+    H: HostnameResolver + Send + Sync + 'static,
 {
     if max_in_flight == 0 {
         return Err(io::Error::new(
@@ -96,6 +125,7 @@ where
             hosts,
             max_in_flight,
             probe,
+            hostname_resolver,
             cancel_for_thread,
             event_tx,
             result_tx,
@@ -122,18 +152,29 @@ enum ProbeResult {
     },
 }
 
-fn run_scan_loop<P>(
+#[derive(Clone, Copy, Debug, Default)]
+struct NoopHostnameResolver;
+
+impl HostnameResolver for NoopHostnameResolver {
+    fn resolve(&self, _ip: &str) -> Option<String> {
+        None
+    }
+}
+
+fn run_scan_loop<P, H>(
     task_id: u64,
     total_hosts: usize,
     mut hosts: super::ip_box::HostIter,
     max_in_flight: usize,
     probe: Arc<P>,
+    hostname_resolver: Arc<H>,
     cancel_flag: Arc<AtomicBool>,
     event_tx: mpsc::Sender<ScanEvent>,
     result_tx: mpsc::Sender<ProbeResult>,
     result_rx: mpsc::Receiver<ProbeResult>,
 ) where
     P: ArpProbe + Send + Sync + 'static,
+    H: HostnameResolver + Send + Sync + 'static,
 {
     let mut scanned_hosts = 0usize;
     let mut found_hosts = 0usize;
@@ -200,11 +241,18 @@ fn run_scan_loop<P>(
                 match result {
                     Ok(Some(mac)) => {
                         found_hosts += 1;
+                        let formatted_mac = format_mac(mac);
                         let _ = event_tx.send(ScanEvent::HostFound {
                             task_id,
-                            ip,
-                            mac: format_mac(mac),
+                            ip: ip.clone(),
+                            mac: formatted_mac,
                         });
+                        spawn_hostname_lookup(
+                            task_id,
+                            ip,
+                            Arc::clone(&hostname_resolver),
+                            event_tx.clone(),
+                        );
                     }
                     Ok(None) => {}
                     Err(err) if err.kind() == io::ErrorKind::Unsupported => {
@@ -243,6 +291,27 @@ fn run_scan_loop<P>(
         }
     };
     let _ = event_tx.send(terminal_event);
+}
+
+fn spawn_hostname_lookup<H>(
+    task_id: u64,
+    ip: String,
+    hostname_resolver: Arc<H>,
+    event_tx: mpsc::Sender<ScanEvent>,
+) where
+    H: HostnameResolver + Send + Sync + 'static,
+{
+    thread::spawn(move || {
+        let Some(hostname) = hostname_resolver.resolve(&ip) else {
+            return;
+        };
+
+        let _ = event_tx.send(ScanEvent::HostnameResolved {
+            task_id,
+            ip,
+            hostname,
+        });
+    });
 }
 
 fn format_mac(mac: [u8; 6]) -> String {

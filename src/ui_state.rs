@@ -123,6 +123,7 @@ impl ScanUiState {
 
                 ApplyOutcome::applied(row_mutation)
             }
+            ScanEvent::HostnameResolved { .. } => ApplyOutcome::applied(RowMutation::None),
             ScanEvent::Finished {
                 scanned_hosts,
                 found_hosts,
@@ -190,6 +191,7 @@ impl ScanUiState {
             ScanEvent::Started { task_id, .. }
             | ScanEvent::Progress { task_id, .. }
             | ScanEvent::HostFound { task_id, .. }
+            | ScanEvent::HostnameResolved { task_id, .. }
             | ScanEvent::Finished { task_id, .. }
             | ScanEvent::Cancelled { task_id, .. }
             | ScanEvent::Failed { task_id, .. } => *task_id,
