@@ -10,10 +10,12 @@ fn result_list_panel_smoke_test_exposes_generated_bindings() {
         ResultListData {
             ip: "192.168.1.2".into(),
             mac: "AA:AA:AA:AA:AA:02".into(),
+            hostname: "printer.local".into(),
         },
         ResultListData {
             ip: "192.168.1.20".into(),
             mac: "AA:AA:AA:AA:AA:14".into(),
+            hostname: "".into(),
         },
     ]);
 
@@ -28,7 +30,9 @@ fn result_list_panel_smoke_test_exposes_generated_bindings() {
     assert_eq!(rows.row_count(), 2);
     assert_eq!(rows.row_data(0).unwrap().ip, "192.168.1.2");
     assert_eq!(rows.row_data(0).unwrap().mac, "AA:AA:AA:AA:AA:02");
+    assert_eq!(rows.row_data(0).unwrap().hostname, "printer.local");
     assert_eq!(rows.row_data(1).unwrap().ip, "192.168.1.20");
     assert_eq!(rows.row_data(1).unwrap().mac, "AA:AA:AA:AA:AA:14");
+    assert_eq!(rows.row_data(1).unwrap().hostname, "");
     assert!(rows.row_data(2).is_none());
 }

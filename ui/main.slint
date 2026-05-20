@@ -3,6 +3,7 @@ import { Button, GroupBox, LineEdit, ListView } from "std-widgets.slint";
 export struct ResultListData {
     ip: string,
     mac: string,
+    hostname: string,
 }
 
 component ResultListPanel inherits Rectangle {
@@ -13,7 +14,8 @@ component ResultListPanel inherits Rectangle {
     private property <length> row-height: 34px;
     private property <length> column-spacing: 12px;
     private property <length> ip-column-width: 180px;
-    private property <length> mac-column-min-width: 0px;
+    private property <length> mac-column-width: 180px;
+    private property <length> hostname-column-min-width: 0px;
     private property <length> row-font-size: 15px;
     private property <length> header-font-size: 15px;
 
@@ -59,14 +61,32 @@ component ResultListPanel inherits Rectangle {
                 }
 
                 Rectangle {
-                    min-width: root.mac-column-min-width;
-                    horizontal-stretch: 1;
+                    min-width: root.mac-column-width;
+                    preferred-width: root.mac-column-width;
+                    max-width: root.mac-column-width;
 
                     Text {
                         x: 6px;
                         width: parent.width - self.x;
                         height: 100%;
                         text: "MAC";
+                        color: #2f3946;
+                        font-size: root.header-font-size;
+                        font-weight: 700;
+                        vertical-alignment: center;
+                        overflow: elide;
+                    }
+                }
+
+                Rectangle {
+                    min-width: root.hostname-column-min-width;
+                    horizontal-stretch: 1;
+
+                    Text {
+                        x: 6px;
+                        width: parent.width - self.x;
+                        height: 100%;
+                        text: "Hostname";
                         color: #2f3946;
                         font-size: root.header-font-size;
                         font-weight: 700;
@@ -118,8 +138,9 @@ component ResultListPanel inherits Rectangle {
                             }
 
                             Rectangle {
-                                min-width: root.mac-column-min-width;
-                                horizontal-stretch: 1;
+                                min-width: root.mac-column-width;
+                                preferred-width: root.mac-column-width;
+                                max-width: root.mac-column-width;
                                 clip: true;
 
                                 Text {
@@ -127,6 +148,23 @@ component ResultListPanel inherits Rectangle {
                                     width: parent.width - self.x;
                                     height: 100%;
                                     text: row.mac;
+                                    color: #1f2933;
+                                    font-size: root.row-font-size;
+                                    vertical-alignment: center;
+                                    overflow: elide;
+                                }
+                            }
+
+                            Rectangle {
+                                min-width: root.hostname-column-min-width;
+                                horizontal-stretch: 1;
+                                clip: true;
+
+                                Text {
+                                    x: 6px;
+                                    width: parent.width - self.x;
+                                    height: 100%;
+                                    text: row.hostname;
                                     color: #1f2933;
                                     font-size: root.row-font-size;
                                     vertical-alignment: center;

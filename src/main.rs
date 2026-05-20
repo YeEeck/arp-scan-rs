@@ -184,5 +184,6 @@ fn map_row(row: arp_scan_rs::ui_state::ResultRow) -> ResultListData {
     ResultListData {
         ip: row.ip.into(),
         mac: row.mac.into(),
+        hostname: row.hostname.into(),
     }
 }

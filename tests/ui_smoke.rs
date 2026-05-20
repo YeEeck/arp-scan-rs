@@ -10,10 +10,12 @@ fn main_window_smoke_test_exposes_generated_bindings() {
         ResultListData {
             ip: "192.168.1.2".into(),
             mac: "AA:AA:AA:AA:AA:02".into(),
+            hostname: "printer.local".into(),
         },
         ResultListData {
             ip: "192.168.1.20".into(),
             mac: "AA:AA:AA:AA:AA:14".into(),
+            hostname: "".into(),
         },
     ]);
 
@@ -29,13 +31,13 @@ fn main_window_smoke_test_exposes_generated_bindings() {
     assert_eq!(window.get_progress_text(), "2 / 254");
     assert!(!window.get_scan_enabled());
     assert!(window.get_cancel_enabled());
-    assert_eq!(
-        window
-            .get_result_list_data_model()
-            .as_any()
-            .downcast_ref::<VecModel<ResultListData>>()
-            .unwrap()
-            .row_count(),
-        2
-    );
+    let rows_model = window.get_result_list_data_model();
+    let rows = rows_model
+        .as_any()
+        .downcast_ref::<VecModel<ResultListData>>()
+        .unwrap();
+
+    assert_eq!(rows.row_count(), 2);
+    assert_eq!(rows.row_data(0).unwrap().hostname, "printer.local");
+    assert_eq!(rows.row_data(1).unwrap().hostname, "");
 }
