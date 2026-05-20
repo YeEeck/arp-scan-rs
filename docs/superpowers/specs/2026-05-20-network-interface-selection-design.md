@@ -10,7 +10,7 @@ The selected interaction model is:
 - the window shows a network interface selector inside the existing scan target
   group
 - the selector lists all discovered interfaces, including unusable ones
-- unusable interfaces stay visible but are disabled or labeled with a reason
+- unusable interfaces stay visible, show a reason, and are truly not selectable
 - the selector defaults to no selection
 - selecting an interface fills the existing scan target inputs using the
   current input mode
@@ -58,11 +58,15 @@ current scan runtime contract.
 The existing `Scan Target` group gains a new control row above the input mode
 selector.
 
-The new row contains a network interface `ComboBox`.
+The new row contains a custom network interface selector with a popup list.
 
 The selector remains part of the scan target setup rather than becoming a
 separate settings panel because its only purpose in this design is to populate
 the target fields the user already edits there.
+
+The custom selector is preferred over `ComboBox` because this interaction needs
+per-item availability handling and the current toolkit path does not provide a
+clean way to disable individual `ComboBox` entries while keeping them visible.
 
 ### Default state
 
@@ -103,9 +107,10 @@ configuration to derive a scan target. Typical examples include:
 
 Unusable entries must be represented in a way users can understand at a glance:
 
-- disabled when the UI toolkit supports it cleanly for the chosen control
-- otherwise labeled with a short reason in the visible text and ignored by the
-  selection handler
+- keep them visible in the popup list
+- append a short reason in the visible text
+- render them in a disabled visual state
+- prevent both pointer and keyboard selection from choosing them
 
 Examples:
 
@@ -130,6 +135,9 @@ Each item needs:
 
 The display label should be fully prepared on the Rust side so the Slint view
 can bind it directly.
+
+The availability flag must also cross the UI boundary so the Slint selector can
+decide which rows are selectable.
 
 ### Input autofill model
 
@@ -202,7 +210,7 @@ Reason text should stay concise and stable enough for tests, such as:
 
 The `Scan Target` group now contains, in order:
 
-1. network interface selector
+1. network interface selector trigger plus popup list
 2. input mode selector
 3. conditional input fields for either `CIDR` or `IP + subnet mask`
 
@@ -262,7 +270,7 @@ state transitions.
 Primary files expected to change:
 
 - `ui/main.slint`
-  - add the network interface selector and related bindings
+  - add the custom network interface selector and related bindings
 - `src/main.rs`
   - load interface items at startup
   - bind the interface model into the window
@@ -314,6 +322,7 @@ Update generated-binding smoke coverage to assert:
 - the new interface model/property exists
 - the selected-interface property defaults to the empty choice
 - setting interface display items through bindings succeeds
+- unusable interface rows carry a disabled flag for the custom selector
 
 ## Verification
 

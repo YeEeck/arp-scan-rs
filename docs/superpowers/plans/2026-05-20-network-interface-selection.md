@@ -2,9 +2,9 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** Add network interface enumeration to the UI, keep all interfaces visible with unavailable ones labeled, and autofill the existing scan target inputs from the selected usable interface without changing the active input mode.
+**Goal:** Add network interface enumeration to the UI, keep all interfaces visible with unavailable ones labeled, make unavailable entries truly unselectable, and autofill the existing scan target inputs from the selected usable interface without changing the active input mode.
 
-**Architecture:** Introduce a focused `network_interface` module that projects platform data into a UI-friendly list of interface items. Reuse `scan_target` as the single place that knows how to apply interface-derived IPv4 data to the current input state, then extend `main.rs` and Slint bindings so the UI can show the list, keep a default empty selection, and update the visible target fields when the user chooses a usable interface.
+**Architecture:** Introduce a focused `network_interface` module that projects platform data into a UI-friendly list of interface items. Reuse `scan_target` as the single place that knows how to apply interface-derived IPv4 data to the current input state, then extend `main.rs` and Slint bindings so the UI can show the list, keep a default empty selection, and update the visible target fields when the user chooses a usable interface. Replace the plain `ComboBox` with a custom popup selector so each row can expose its own enabled state while staying visible.
 
 **Tech Stack:** Rust 2024, Slint 1.14, cargo test, Windows IP Helper API, existing `scan_target` conversion helpers
 
@@ -19,7 +19,7 @@
 - Modify: `src/scan_target.rs`
   - Add helpers that apply a selected interface’s IPv4 data to the existing `UiInputState` while preserving the current mode.
 - Modify: `ui/main.slint`
-  - Add interface-selector properties and a new selector row in the scan target group.
+  - Add interface-selector properties and a custom selector row in the scan target group.
 - Modify: `src/main.rs`
   - Load interface items, expose them to Slint, initialize the empty selection, and handle selection-driven autofill.
 - Modify: `tests/scan_target.rs`
@@ -351,12 +351,15 @@ fn main_window_smoke_test_exposes_interface_bindings_and_defaults() {
     let interfaces = VecModel::from(vec![
         NetworkInterfaceItem {
             label: "Select network interface".into(),
+            enabled: true,
         },
         NetworkInterfaceItem {
             label: "Ethernet".into(),
+            enabled: true,
         },
         NetworkInterfaceItem {
             label: "Loopback Pseudo-Interface (Loopback)".into(),
+            enabled: false,
         },
     ]);
 
@@ -381,10 +384,12 @@ fn main_window_smoke_test_exposes_interface_bindings_and_defaults() {
     assert_eq!(interface_rows.row_count(), 3);
     assert_eq!(interface_rows.row_data(0).unwrap().label, "Select network interface");
     assert_eq!(interface_rows.row_data(1).unwrap().label, "Ethernet");
+    assert!(interface_rows.row_data(1).unwrap().enabled);
     assert_eq!(
         interface_rows.row_data(2).unwrap().label,
         "Loopback Pseudo-Interface (Loopback)"
     );
+    assert!(!interface_rows.row_data(2).unwrap().enabled);
 }
 ```
 
@@ -400,6 +405,7 @@ Expected: FAIL with missing `NetworkInterfaceItem` / `network_interface_model` /
 ```slint
 export struct NetworkInterfaceItem {
     label: string,
+    enabled: bool,
 }
 ```
 
@@ -411,16 +417,43 @@ in-out property <int> selected_network_interface_index: 0;
 callback network_interface_changed(index: int);
 ```
 
-Add the selector row ahead of the mode selector:
+Add the custom selector row ahead of the mode selector:
 
 ```slint
-ComboBox {
-    min-height: root.control-min-height;
-    model: root.network_interface_model.map(item => item.label);
-    current-index <=> root.selected_network_interface_index;
-    enabled: root.scan_enabled;
-    selected(index) => {
-        root.network_interface_changed(index);
+// Trigger text mirrors the selected interface or the placeholder at index 0.
+// The popup renders each row and only wires click/keyboard selection when
+// `item.enabled` is true.
+
+component NetworkInterfaceSelector inherits Rectangle {
+    in property <[NetworkInterfaceItem]> model;
+    in-out property <int> current-index: 0;
+    in property <bool> enabled: true;
+    callback selected(index: int);
+
+    trigger := Button {
+        text: root.model[root.current-index].label;
+        enabled: root.enabled;
+        clicked => { popup.open(); }
+    }
+
+    popup := PopupWindow {
+        ScrollView {
+            VerticalLayout {
+                for item[index] in root.model : Rectangle {
+                    min-height: 36px;
+                    background: item.enabled ? transparent : #f0f2f5;
+
+                    TouchArea {
+                        enabled: item.enabled;
+                        clicked => {
+                            root.current-index = index;
+                            root.selected(index);
+                            popup.close();
+                        }
+                    }
+                }
+            }
+        }
     }
 }
 ```
@@ -428,7 +461,9 @@ ComboBox {
 `src/main.rs`
 
 ```rust
-use arp_scan_rs::network_interface::{format_interface_label, load_network_interfaces};
+use arp_scan_rs::network_interface::{
+    format_interface_label, load_network_interfaces, NetworkInterfaceAvailability,
+};
 use arp_scan_rs::scan_target::{apply_interface_to_input_state, prepare_scan_target, InputMode, UiInputState};
 use arp_scan_rs::ui::{MainWindow, NetworkInterfaceItem, ResultListData};
 ```
@@ -439,9 +474,11 @@ At startup:
 let interfaces = load_network_interfaces().unwrap_or_else(|_| Vec::new());
 let interface_items = std::iter::once(NetworkInterfaceItem {
     label: "Select network interface".into(),
+    enabled: true,
 })
 .chain(interfaces.iter().map(|item| NetworkInterfaceItem {
     label: format_interface_label(item).into(),
+    enabled: matches!(item.availability, NetworkInterfaceAvailability::Available(_)),
 }))
 .collect::<Vec<_>>();
 
