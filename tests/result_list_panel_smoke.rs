@@ -97,23 +97,71 @@ fn result_list_panel_keeps_hostname_column_reachable_with_empty_and_filled_rows(
     .next()
     .expect("hostname column header should stay present");
     assert_eq!(hostname_header.accessible_value().as_deref(), Some("Hostname"));
-    assert!(
-        hostname_header.size().width >= 90.0,
-        "hostname header should keep enough visible width for a narrow panel, got {}",
-        hostname_header.size().width
+
+    let hostname_cells =
+        ElementHandle::find_by_element_id(&panel, "ResultListPanel::hostname-cell-text")
+            .collect::<Vec<_>>();
+    assert_eq!(
+        hostname_cells.len(),
+        2,
+        "two rows should render two hostname cells"
     );
 
-    let hostname_cell =
-        ElementHandle::find_by_element_id(&panel, "ResultListPanel::hostname-cell-text")
-            .next()
-            .expect("hostname cell text should stay present");
+    let hostname_values = hostname_cells
+        .iter()
+        .map(|cell| cell.accessible_value().map(|value| value.to_string()))
+        .collect::<Vec<_>>();
     assert_eq!(
-        hostname_cell.accessible_value().as_deref(),
-        Some("printer.local")
+        hostname_values,
+        vec![Some("printer.local".to_string()), Some(String::new())]
+    );
+
+    let header_position = hostname_header.absolute_position();
+    let header_size = hostname_header.size();
+    let first_cell_position = hostname_cells[0].absolute_position();
+    let first_cell_size = hostname_cells[0].size();
+    let second_cell_position = hostname_cells[1].absolute_position();
+    let second_cell_size = hostname_cells[1].size();
+    let window_width = 480.0;
+
+    assert!(
+        (header_position.x - first_cell_position.x).abs() < f32::EPSILON,
+        "hostname header and first cell should stay column-aligned: header x={}, cell x={}",
+        header_position.x,
+        first_cell_position.x
     );
     assert!(
-        hostname_cell.size().width >= 90.0,
-        "hostname cell should keep enough visible width for a narrow panel, got {}",
-        hostname_cell.size().width
+        (first_cell_position.x - second_cell_position.x).abs() < f32::EPSILON,
+        "hostname cells should stay aligned across rows: first x={}, second x={}",
+        first_cell_position.x,
+        second_cell_position.x
+    );
+    assert!(
+        (header_size.width - first_cell_size.width).abs() < f32::EPSILON,
+        "hostname header and first cell should keep the same visible column width: header={}, cell={}",
+        header_size.width,
+        first_cell_size.width
+    );
+    assert!(
+        first_cell_position.x >= 0.0 && first_cell_position.x + first_cell_size.width <= window_width,
+        "first hostname cell should stay inside the visible window region: left={}, right={}, window={}",
+        first_cell_position.x,
+        first_cell_position.x + first_cell_size.width,
+        window_width
+    );
+    assert!(
+        header_position.x >= 0.0 && header_position.x + header_size.width <= window_width,
+        "hostname header should stay inside the visible window region: left={}, right={}, window={}",
+        header_position.x,
+        header_position.x + header_size.width,
+        window_width
+    );
+    assert!(
+        second_cell_position.x >= 0.0
+            && second_cell_position.x + second_cell_size.width <= window_width,
+        "second hostname cell should stay inside the visible window region: left={}, right={}, window={}",
+        second_cell_position.x,
+        second_cell_position.x + second_cell_size.width,
+        window_width
     );
 }
