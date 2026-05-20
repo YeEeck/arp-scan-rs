@@ -78,6 +78,20 @@ pub fn prepare_scan_target(state: &UiInputState) -> Result<String, ScanTargetErr
     })
 }
 
+pub fn prepare_scan_target_from_ui_fields(
+    input_mode: i32,
+    cidr_text: &str,
+    ip_text: &str,
+    mask_text: &str,
+) -> Result<String, ScanTargetError> {
+    prepare_scan_target(&UiInputState {
+        mode: decode_input_mode(input_mode)?,
+        cidr_text: cidr_text.to_string(),
+        ip_text: ip_text.to_string(),
+        mask_text: mask_text.to_string(),
+    })
+}
+
 pub fn convert_cidr_to_ip_and_mask(cidr_text: &str) -> Result<(String, String), ScanTargetError> {
     let cidr = normalize_cidr(cidr_text)?;
     let (ip_text, prefix_text) = cidr
@@ -118,6 +132,14 @@ fn normalize_cidr(cidr_text: &str) -> Result<String, ScanTargetError> {
     let mask = prefix_to_mask(prefix);
     let network = u32::from(ip) & mask;
     Ok(format!("{}/{}", Ipv4Addr::from(network), prefix))
+}
+
+fn decode_input_mode(input_mode: i32) -> Result<InputMode, ScanTargetError> {
+    match input_mode {
+        0 => Ok(InputMode::IpAndMask),
+        1 => Ok(InputMode::Cidr),
+        _ => Err(ScanTargetError("Invalid input mode")),
+    }
 }
 
 fn normalize_ip_and_mask(ip_text: &str, mask_text: &str) -> Result<String, ScanTargetError> {

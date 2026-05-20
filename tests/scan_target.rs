@@ -1,6 +1,7 @@
 use arp_scan_rs::scan_target::{
     convert_cidr_to_ip_and_mask, convert_ip_and_mask_to_cidr, normalize_scan_target,
-    prepare_scan_target, InputMode, ScanTargetInput, UiInputState,
+    prepare_scan_target, prepare_scan_target_from_ui_fields, InputMode, ScanTargetInput,
+    UiInputState,
 };
 
 #[test]
@@ -124,4 +125,32 @@ fn prepare_scan_target_uses_visible_ip_and_mask_mode() {
     };
 
     assert_eq!(prepare_scan_target(&state).unwrap(), "192.168.1.0/24");
+}
+
+#[test]
+fn prepare_scan_target_from_ui_fields_uses_ip_and_mask_when_mode_is_zero() {
+    assert_eq!(
+        prepare_scan_target_from_ui_fields(0, "10.0.0.0/8", "192.168.1.23", "255.255.255.0")
+            .unwrap(),
+        "192.168.1.0/24"
+    );
+}
+
+#[test]
+fn prepare_scan_target_from_ui_fields_uses_cidr_when_mode_is_one() {
+    assert_eq!(
+        prepare_scan_target_from_ui_fields(1, "172.16.4.8/16", "192.168.1.23", "255.255.255.0")
+            .unwrap(),
+        "172.16.0.0/16"
+    );
+}
+
+#[test]
+fn prepare_scan_target_from_ui_fields_rejects_unknown_mode() {
+    assert_eq!(
+        prepare_scan_target_from_ui_fields(2, "172.16.4.8/16", "192.168.1.23", "255.255.255.0")
+            .unwrap_err()
+            .to_string(),
+        "Invalid input mode"
+    );
 }
