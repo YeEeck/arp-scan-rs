@@ -122,7 +122,7 @@ pub struct IpCheckResult {
     pub exist: bool,
 }
 
-#[cfg(target_os = "windows")]
+#[cfg_attr(not(target_os = "windows"), allow(dead_code))]
 fn collect_scan_results(task: ScanTask) -> io::Result<Vec<IpCheckResult>> {
     let ScanTask {
         events,
@@ -144,7 +144,9 @@ fn collect_scan_results(task: ScanTask) -> io::Result<Vec<IpCheckResult>> {
             }
             ScanEvent::Failed { message, .. } => {
                 terminal_error = Some(io::Error::other(message));
+                break;
             }
+            ScanEvent::Finished { .. } | ScanEvent::Cancelled { .. } => break,
             _ => {}
         }
     }
@@ -156,6 +158,138 @@ fn collect_scan_results(task: ScanTask) -> io::Result<Vec<IpCheckResult>> {
     }
 
     Ok(results)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::collect_scan_results;
+    use crate::scan_master::{
+        start_scan_with_probe_and_hostname_resolver, ArpProbe, HostnameResolver, ScanEvent,
+    };
+    use std::io;
+    use std::sync::{mpsc, Arc, Mutex};
+    use std::thread;
+    use std::time::Duration;
+
+    #[derive(Clone)]
+    struct QuickProbe;
+
+    impl ArpProbe for QuickProbe {
+        fn probe(&self, ip: &str) -> io::Result<Option<[u8; 6]>> {
+            if ip.ends_with(".1") {
+                Ok(Some([0xAA, 0xBB, 0xCC, 0xDD, 0xEE, 0x01]))
+            } else {
+                Ok(None)
+            }
+        }
+    }
+
+    #[derive(Clone)]
+    struct BlockingHostnameResolver {
+        started_tx: mpsc::Sender<String>,
+        permits: Arc<Mutex<mpsc::Receiver<()>>>,
+    }
+
+    impl HostnameResolver for BlockingHostnameResolver {
+        fn resolve(&self, ip: &str) -> Option<String> {
+            self.started_tx
+                .send(ip.to_string())
+                .expect("test should observe hostname resolution start");
+
+            self.permits
+                .lock()
+                .expect("hostname permits should not be poisoned")
+                .recv_timeout(Duration::from_secs(2))
+                .ok()?;
+
+            Some("printer.lan".to_string())
+        }
+    }
+
+    #[test]
+    fn collect_scan_results_stops_at_terminal_event_without_waiting_for_hostname_lookup() {
+        let (started_tx, started_rx) = mpsc::channel();
+        let (_permit_tx, permit_rx) = mpsc::channel();
+        let resolver = BlockingHostnameResolver {
+            started_tx,
+            permits: Arc::new(Mutex::new(permit_rx)),
+        };
+
+        let task = start_scan_with_probe_and_hostname_resolver(
+            "192.168.1.1/32",
+            1,
+            Arc::new(QuickProbe),
+            Arc::new(resolver),
+        )
+        .expect("scan task should start");
+
+        let (result_tx, result_rx) = mpsc::channel();
+        thread::spawn(move || {
+            let result = collect_scan_results(task);
+            result_tx
+                .send(result)
+                .expect("test should observe collection completion");
+        });
+
+        assert_eq!(
+            started_rx
+                .recv_timeout(Duration::from_secs(1))
+                .expect("hostname lookup should have started"),
+            "192.168.1.1"
+        );
+
+        let results = result_rx
+            .recv_timeout(Duration::from_millis(200))
+            .expect("collection should finish without waiting for reverse DNS");
+        let results = results.expect("collection should succeed");
+
+        assert_eq!(results.len(), 1);
+        assert_eq!(results[0].ip, "192.168.1.1");
+        assert_eq!(results[0].mac, "AA:BB:CC:DD:EE:01");
+        assert!(results[0].exist);
+    }
+
+    #[test]
+    fn collect_scan_results_ignores_hostname_updates() {
+        let (event_tx, event_rx) = mpsc::channel();
+        let join_handle = thread::spawn(move || {
+            let _ = event_tx.send(ScanEvent::Started {
+                task_id: 11,
+                total_hosts: 1,
+            });
+            let _ = event_tx.send(ScanEvent::HostFound {
+                task_id: 11,
+                ip: "192.168.1.1".into(),
+                mac: "AA:BB:CC:DD:EE:01".into(),
+            });
+            let _ = event_tx.send(ScanEvent::Progress {
+                task_id: 11,
+                scanned_hosts: 1,
+                total_hosts: 1,
+            });
+            let _ = event_tx.send(ScanEvent::Finished {
+                task_id: 11,
+                scanned_hosts: 1,
+                found_hosts: 1,
+            });
+            let _ = event_tx.send(ScanEvent::HostnameResolved {
+                task_id: 11,
+                ip: "192.168.1.1".into(),
+                hostname: "printer.lan".into(),
+            });
+        });
+
+        let results = collect_scan_results(crate::scan_master::ScanTask {
+            task_id: 11,
+            events: event_rx,
+            cancel_flag: Arc::new(std::sync::atomic::AtomicBool::new(false)),
+            join_handle,
+        })
+        .expect("collection should succeed");
+
+        assert_eq!(results.len(), 1);
+        assert_eq!(results[0].ip, "192.168.1.1");
+    }
 }
 
 fn format_mac(mac: [u8; 6]) -> String {
