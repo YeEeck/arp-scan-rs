@@ -1,5 +1,5 @@
 use arp_scan_rs::scan_master::ScanEvent;
-use arp_scan_rs::ui_state::ScanUiState;
+use arp_scan_rs::ui_state::{RowMutation, ScanUiState};
 
 #[test]
 fn ui_state_sorts_deduplicates_and_ignores_stale_events() {
@@ -112,7 +112,7 @@ fn ui_state_updates_hostname_in_place_and_ignores_stale_hostname_events() {
         ip: "192.168.1.10".into(),
         mac: "AA:BB:CC:DD:EE:10".into(),
     });
-    state.apply_event(ScanEvent::HostnameResolved {
+    let hostname_update = state.apply_event(ScanEvent::HostnameResolved {
         task_id: 41,
         ip: "192.168.1.10".into(),
         hostname: "printer.lan".into(),
@@ -125,6 +125,14 @@ fn ui_state_updates_hostname_in_place_and_ignores_stale_hostname_events() {
 
     let snapshot = state.snapshot();
 
+    assert!(matches!(
+        hostname_update.row_mutation,
+        RowMutation::Update { index, ref row }
+            if index == 0
+                && row.ip == "192.168.1.10"
+                && row.mac == "AA:BB:CC:DD:EE:10"
+                && row.hostname == "printer.lan"
+    ));
     assert_eq!(snapshot.rows.len(), 2);
     assert_eq!(snapshot.rows[0].ip, "192.168.1.10");
     assert_eq!(snapshot.rows[0].mac, "AA:BB:CC:DD:EE:10");
@@ -132,6 +140,46 @@ fn ui_state_updates_hostname_in_place_and_ignores_stale_hostname_events() {
     assert_eq!(snapshot.rows[1].ip, "192.168.1.20");
     assert_eq!(snapshot.rows[1].mac, "AA:BB:CC:DD:EE:20");
     assert_eq!(snapshot.rows[1].hostname, "");
+}
+
+#[test]
+fn ui_state_preserves_hostname_when_host_found_is_repeated() {
+    let mut state = ScanUiState::default();
+
+    state.begin_scan(52);
+    state.apply_event(ScanEvent::Started {
+        task_id: 52,
+        total_hosts: 1,
+    });
+    state.apply_event(ScanEvent::HostFound {
+        task_id: 52,
+        ip: "192.168.1.30".into(),
+        mac: "AA:BB:CC:DD:EE:30".into(),
+    });
+    state.apply_event(ScanEvent::HostnameResolved {
+        task_id: 52,
+        ip: "192.168.1.30".into(),
+        hostname: "nas.lan".into(),
+    });
+
+    let repeated_host = state.apply_event(ScanEvent::HostFound {
+        task_id: 52,
+        ip: "192.168.1.30".into(),
+        mac: "AA:BB:CC:DD:EE:30".into(),
+    });
+
+    let snapshot = state.snapshot();
+
+    assert!(matches!(
+        repeated_host.row_mutation,
+        RowMutation::Update { index, ref row }
+            if index == 0
+                && row.ip == "192.168.1.30"
+                && row.mac == "AA:BB:CC:DD:EE:30"
+                && row.hostname == "nas.lan"
+    ));
+    assert_eq!(snapshot.rows.len(), 1);
+    assert_eq!(snapshot.rows[0].hostname, "nas.lan");
 }
 
 #[test]

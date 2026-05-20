@@ -114,10 +114,17 @@ impl ScanUiState {
             ScanEvent::HostFound { ip, mac, .. } => {
                 let key = ip_to_key(&ip);
                 let index = self.results.range(..key).count();
-                let row = ResultRow {
-                    ip,
-                    mac,
-                    hostname: String::new(),
+                let row = match self.results.get(&key) {
+                    Some(existing) => ResultRow {
+                        ip,
+                        mac,
+                        hostname: existing.hostname.clone(),
+                    },
+                    None => ResultRow {
+                        ip,
+                        mac,
+                        hostname: String::new(),
+                    },
                 };
 
                 let row_mutation = if self.results.insert(key, row.clone()).is_some() {
