@@ -495,6 +495,35 @@ impl ArpProbe for AllHostsFoundProbe {
 }
 
 #[derive(Clone)]
+struct FirstNHostsFoundProbe {
+    found_hosts: usize,
+}
+
+impl ArpProbe for FirstNHostsFoundProbe {
+    fn probe(&self, ip: &str) -> io::Result<Option<[u8; 6]>> {
+        let suffix = ip
+            .rsplit('.')
+            .next()
+            .expect("test IPs should contain an IPv4 suffix")
+            .parse::<usize>()
+            .expect("IPv4 suffix should parse");
+
+        if suffix > self.found_hosts {
+            return Ok(None);
+        }
+
+        Ok(Some([
+            0xAA,
+            0xBB,
+            0xCC,
+            0xDD,
+            0xEE,
+            u8::try_from(suffix).expect("IPv4 suffix should fit in a MAC byte"),
+        ]))
+    }
+}
+
+#[derive(Clone)]
 struct PeakTrackingHostnameResolver {
     active: Arc<AtomicUsize>,
     peak: Arc<AtomicUsize>,
@@ -814,8 +843,8 @@ fn runtime_caps_hostname_workers_across_cancelled_scan_cycles() {
 #[test]
 fn runtime_eventually_processes_hostname_jobs_when_executor_queue_is_full() {
     let _lock = hostname_runtime_test_lock();
-    let host_count = 6;
-    let effective_cap = host_count.min(HOSTNAME_WORKER_COUNT);
+    let hostname_job_count = HOSTNAME_WORKER_COUNT + 4;
+    let scanned_host_count = 30;
     let active = Arc::new(AtomicUsize::new(0));
     let peak = Arc::new(AtomicUsize::new(0));
     let (started_tx, started_rx) = mpsc::channel();
@@ -828,9 +857,11 @@ fn runtime_eventually_processes_hostname_jobs_when_executor_queue_is_full() {
     };
 
     let task = start_scan_with_probe_and_hostname_resolver(
-        "192.168.1.0/29",
-        host_count,
-        Arc::new(AllHostsFoundProbe),
+        "192.168.1.0/27",
+        hostname_job_count,
+        Arc::new(FirstNHostsFoundProbe {
+            found_hosts: hostname_job_count,
+        }),
         Arc::new(resolver),
     )
     .unwrap();
@@ -849,8 +880,8 @@ fn runtime_eventually_processes_hostname_jobs_when_executor_queue_is_full() {
         let finished = matches!(
             event,
             ScanEvent::Finished {
-                scanned_hosts: 6,
-                found_hosts: 6,
+                scanned_hosts: 30,
+                found_hosts: 20,
                 ..
             }
         );
@@ -860,14 +891,37 @@ fn runtime_eventually_processes_hostname_jobs_when_executor_queue_is_full() {
         }
     }
 
-    let started_before_release: Vec<_> = started_rx.try_iter().collect();
+    let mut started_before_release = Vec::new();
+    while let Ok(ip) = started_rx.recv_timeout(Duration::from_millis(150)) {
+        started_before_release.push(ip);
+    }
 
-    for _ in 0..host_count {
+    assert_eq!(
+        started_before_release.len(),
+        HOSTNAME_WORKER_COUNT,
+        "exactly the fixed hostname worker pool should start before queued jobs wait"
+    );
+    assert_eq!(
+        started_rx.recv_timeout(Duration::from_millis(150)),
+        Err(mpsc::RecvTimeoutError::Timeout),
+        "queued hostname jobs should stay blocked until permits are released"
+    );
+    assert_eq!(
+        peak.load(Ordering::SeqCst),
+        HOSTNAME_WORKER_COUNT,
+        "hostname concurrency should reach the fixed worker cap"
+    );
+    assert!(
+        active.load(Ordering::SeqCst) <= HOSTNAME_WORKER_COUNT,
+        "active hostname work should not exceed the fixed worker cap"
+    );
+
+    for _ in 0..hostname_job_count {
         permit_tx.send(()).unwrap();
     }
 
     let mut hostname_updates = Vec::new();
-    while hostname_updates.len() < host_count {
+    while hostname_updates.len() < hostname_job_count {
         match events
             .recv_timeout(Duration::from_secs(1))
             .expect("hostname jobs should continue after terminal scan event")
@@ -890,47 +944,41 @@ fn runtime_eventually_processes_hostname_jobs_when_executor_queue_is_full() {
 
     let peak = peak.load(Ordering::SeqCst);
 
-    assert!(peak > 0);
-    assert!(
-        peak >= started_before_release.len(),
-        "peak concurrency should cover the hostname jobs that had already started"
-    );
-    assert!(
-        peak <= effective_cap,
-        "hostname concurrency should stay within the effective worker cap"
-    );
+    assert_eq!(peak, HOSTNAME_WORKER_COUNT);
     assert_eq!(active.load(Ordering::SeqCst), 0);
     assert!(runtime_events.iter().any(|event| matches!(
         event,
         ScanEvent::Finished {
-            scanned_hosts: 6,
-            found_hosts: 6,
+            scanned_hosts: finished_scanned_hosts,
+            found_hosts: finished_found_hosts,
             ..
-        }
+        } if *finished_scanned_hosts == scanned_host_count
+            && *finished_found_hosts == hostname_job_count
     )));
-    assert!(!started_before_release.is_empty());
-    assert!(started_before_release.len() <= host_count);
+    assert!(
+        hostname_job_count > HOSTNAME_WORKER_COUNT,
+        "test setup must enqueue more jobs than the fixed hostname worker pool"
+    );
+
+    let mut expected_started: Vec<_> = (1..=hostname_job_count)
+        .map(|suffix| format!("192.168.1.{suffix}"))
+        .collect();
+    expected_started.sort();
     assert_eq!(
         all_started,
-        vec![
-            "192.168.1.1".to_string(),
-            "192.168.1.2".to_string(),
-            "192.168.1.3".to_string(),
-            "192.168.1.4".to_string(),
-            "192.168.1.5".to_string(),
-            "192.168.1.6".to_string(),
-        ]
+        expected_started
     );
+
+    let mut expected_updates: Vec<_> = (1..=hostname_job_count)
+        .map(|suffix| {
+            let ip = format!("192.168.1.{suffix}");
+            (ip.clone(), format!("host-{ip}"))
+        })
+        .collect();
+    expected_updates.sort();
     assert_eq!(
         hostname_updates,
-        vec![
-            ("192.168.1.1".to_string(), "host-192.168.1.1".to_string()),
-            ("192.168.1.2".to_string(), "host-192.168.1.2".to_string()),
-            ("192.168.1.3".to_string(), "host-192.168.1.3".to_string()),
-            ("192.168.1.4".to_string(), "host-192.168.1.4".to_string()),
-            ("192.168.1.5".to_string(), "host-192.168.1.5".to_string()),
-            ("192.168.1.6".to_string(), "host-192.168.1.6".to_string()),
-        ]
+        expected_updates
     );
 }
 
