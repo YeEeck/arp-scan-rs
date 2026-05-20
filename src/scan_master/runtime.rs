@@ -2,8 +2,8 @@ use std::collections::VecDeque;
 use std::io;
 use std::panic::{self, AssertUnwindSafe};
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
-use std::sync::mpsc::{self, Receiver, SyncSender, TrySendError};
-use std::sync::{Arc, Mutex, OnceLock};
+use std::sync::mpsc::{self, Receiver};
+use std::sync::{Arc, Condvar, Mutex, OnceLock};
 use std::thread;
 use std::thread::JoinHandle;
 
@@ -58,7 +58,6 @@ pub enum ScanEvent {
 
 static NEXT_TASK_ID: AtomicU64 = AtomicU64::new(1);
 const HOSTNAME_WORKER_COUNT: usize = 2;
-const HOSTNAME_QUEUE_CAPACITY: usize = 2;
 
 pub fn next_task_id() -> u64 {
     NEXT_TASK_ID.fetch_add(1, Ordering::Relaxed)
@@ -184,7 +183,6 @@ fn run_scan_loop<P>(
     let mut in_flight = 0usize;
     let mut dispatch_exhausted = false;
     let mut pending_failure: Option<String> = None;
-    let mut pending_hostname_jobs = VecDeque::new();
     let mut dispatch_tx = Some(result_tx);
     let hostname_executor = hostname_executor();
 
@@ -259,10 +257,7 @@ fn run_scan_loop<P>(
                             cancel_flag: Arc::clone(&cancel_flag),
                             event_tx: event_tx.clone(),
                         };
-                        if let Err(job) = hostname_executor.try_submit(hostname_job) {
-                            pending_hostname_jobs.push_back(job);
-                        }
-                        flush_pending_hostname_jobs(&hostname_executor, &mut pending_hostname_jobs);
+                        hostname_executor.submit(hostname_job);
                     }
                     Ok(None) => {}
                     Err(err) if err.kind() == io::ErrorKind::Unsupported => {
@@ -277,7 +272,6 @@ fn run_scan_loop<P>(
                     scanned_hosts,
                     total_hosts,
                 });
-                flush_pending_hostname_jobs(&hostname_executor, &mut pending_hostname_jobs);
             }
             ProbeResult::WorkerPanicked { ip } => {
                 pending_failure =
@@ -302,10 +296,6 @@ fn run_scan_loop<P>(
         }
     };
     let _ = event_tx.send(terminal_event);
-
-    if !cancel_flag.load(Ordering::Relaxed) && !pending_hostname_jobs.is_empty() {
-        spawn_hostname_job_forwarder(hostname_executor, pending_hostname_jobs);
-    }
 }
 
 #[derive(Clone)]
@@ -318,33 +308,46 @@ struct HostnameJob {
 }
 
 struct HostnameExecutor {
-    job_tx: SyncSender<HostnameJob>,
+    shared: Arc<HostnameQueue>,
+}
+
+struct HostnameQueue {
+    state: Mutex<HostnameQueueState>,
+    ready: Condvar,
+}
+
+#[derive(Default)]
+struct HostnameQueueState {
+    queued_jobs: VecDeque<HostnameJob>,
+    active_workers: usize,
 }
 
 impl HostnameExecutor {
-    fn try_submit(&self, job: HostnameJob) -> Result<(), HostnameJob> {
-        match self.job_tx.try_send(job) {
-            Ok(()) => Ok(()),
-            Err(TrySendError::Full(job)) | Err(TrySendError::Disconnected(job)) => Err(job),
-        }
-    }
-
-    fn submit_blocking(&self, job: HostnameJob) {
-        let _ = self.job_tx.send(job);
+    fn submit(&self, job: HostnameJob) {
+        let mut state = self
+            .shared
+            .state
+            .lock()
+            .expect("hostname queue state should not be poisoned");
+        state.queued_jobs.push_back(job);
+        self.shared.ready.notify_one();
     }
 }
 
 fn hostname_executor() -> &'static HostnameExecutor {
     static HOSTNAME_EXECUTOR: OnceLock<HostnameExecutor> = OnceLock::new();
     HOSTNAME_EXECUTOR.get_or_init(|| {
-        let (job_tx, job_rx) = mpsc::sync_channel(HOSTNAME_QUEUE_CAPACITY);
-        let job_rx = Arc::new(Mutex::new(job_rx));
+        let shared = Arc::new(HostnameQueue {
+            state: Mutex::new(HostnameQueueState::default()),
+            ready: Condvar::new(),
+        });
 
         for _ in 0..HOSTNAME_WORKER_COUNT {
-            let job_rx = Arc::clone(&job_rx);
+            let shared = Arc::clone(&shared);
             thread::spawn(move || {
-                while let Some(job) = recv_hostname_job(&job_rx) {
+                while let Some(job) = recv_hostname_job(&shared) {
                     if job.cancel_flag.load(Ordering::Relaxed) {
+                        release_hostname_worker(&shared);
                         continue;
                     }
 
@@ -352,10 +355,12 @@ fn hostname_executor() -> &'static HostnameExecutor {
                         job.hostname_resolver.resolve(&job.ip)
                     }));
                     let Some(hostname) = resolved.ok().flatten() else {
+                        release_hostname_worker(&shared);
                         continue;
                     };
 
                     if job.cancel_flag.load(Ordering::Relaxed) {
+                        release_hostname_worker(&shared);
                         continue;
                     }
 
@@ -364,50 +369,43 @@ fn hostname_executor() -> &'static HostnameExecutor {
                         ip: job.ip,
                         hostname,
                     });
+                    release_hostname_worker(&shared);
                 }
             });
         }
 
-        HostnameExecutor { job_tx }
+        HostnameExecutor { shared }
     })
 }
 
-fn flush_pending_hostname_jobs(
-    hostname_executor: &HostnameExecutor,
-    pending_jobs: &mut VecDeque<HostnameJob>,
-) {
-    while let Some(job) = pending_jobs.pop_front() {
-        match hostname_executor.try_submit(job) {
-            Ok(()) => {}
-            Err(job) => {
-                pending_jobs.push_front(job);
-                break;
+fn recv_hostname_job(shared: &Arc<HostnameQueue>) -> Option<HostnameJob> {
+    let mut state = shared
+        .state
+        .lock()
+        .expect("hostname queue state should not be poisoned");
+
+    loop {
+        if state.active_workers < HOSTNAME_WORKER_COUNT {
+            if let Some(job) = state.queued_jobs.pop_front() {
+                state.active_workers += 1;
+                return Some(job);
             }
         }
+
+        state = shared
+            .ready
+            .wait(state)
+            .expect("hostname queue wait should not be poisoned");
     }
 }
 
-fn spawn_hostname_job_forwarder(
-    hostname_executor: &'static HostnameExecutor,
-    pending_jobs: VecDeque<HostnameJob>,
-) {
-    thread::spawn(move || {
-        for job in pending_jobs {
-            if job.cancel_flag.load(Ordering::Relaxed) {
-                continue;
-            }
-
-            hostname_executor.submit_blocking(job);
-        }
-    });
-}
-
-fn recv_hostname_job(job_rx: &Arc<Mutex<mpsc::Receiver<HostnameJob>>>) -> Option<HostnameJob> {
-    job_rx
+fn release_hostname_worker(shared: &Arc<HostnameQueue>) {
+    let mut state = shared
+        .state
         .lock()
-        .expect("hostname job receiver should not be poisoned")
-        .recv()
-        .ok()
+        .expect("hostname queue state should not be poisoned");
+    state.active_workers = state.active_workers.saturating_sub(1);
+    shared.ready.notify_one();
 }
 
 fn format_mac(mac: [u8; 6]) -> String {
