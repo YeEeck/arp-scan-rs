@@ -213,11 +213,15 @@ component ResultListPanel inherits Rectangle {
             horizontal-stretch: 1;
             vertical-stretch: 1;
 
-            for row[index] in root.rows: Rectangle {
+            for row[index] in root.rows: row-container := Rectangle {
+                private property <brush> row-background: row-touch-area.has-hover
+                    ? #f2f6fb
+                    : (Math.mod(index, 2) == 0 ? #fcfdff : #f7f9fc);
                 min-height: root.row-height;
                 horizontal-stretch: 1;
                 clip: true;
-                background: Math.mod(index, 2) == 0 ? #fcfdff : #f7f9fc;
+                background: self.row-background;
+                animate background { duration: 150ms; }
 
                 VerticalLayout {
                     spacing: 0px;
@@ -225,7 +229,8 @@ component ResultListPanel inherits Rectangle {
                     Rectangle {
                         min-height: root.row-height - 1px;
                         horizontal-stretch: 1;
-                        background: Math.mod(index, 2) == 0 ? #fcfdff : #f7f9fc;
+                        background: row-container.row-background;
+                        animate background { duration: 150ms; }
 
                         HorizontalLayout {
                             spacing: root.column-spacing;
@@ -293,6 +298,11 @@ component ResultListPanel inherits Rectangle {
                         vertical-stretch: 0;
                         background: #dbe3ec;
                     }
+                }
+
+                row-touch-area := TouchArea {
+                    width: parent.width;
+                    height: parent.height;
                 }
             }
         }
