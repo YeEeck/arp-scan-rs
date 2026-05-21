@@ -73,8 +73,13 @@ component NetworkInterfaceSelector inherits Rectangle {
                     for item[index] in root.model: Rectangle {
                         min-height: 36px;
                         horizontal-stretch: 1;
-                        background: index == root.current-index ? #e7edf5 : (item.enabled ? #ffffff : #f3f5f8);
+                        background: index == root.current-index
+                            ? #e7edf5
+                            : row-touch-area.has-hover && item.enabled && root.enabled
+                                ? #f2f6fb
+                                : (item.enabled ? #ffffff : #f3f5f8);
                         opacity: item.enabled ? 1 : 0.5;
+                        animate background { duration: 150ms; }
 
                         Text {
                             x: 12px;
@@ -87,7 +92,7 @@ component NetworkInterfaceSelector inherits Rectangle {
                             overflow: elide;
                         }
 
-                        TouchArea {
+                        row-touch-area := TouchArea {
                             enabled: item.enabled && root.enabled;
 
                             clicked => {
